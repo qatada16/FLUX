@@ -7,6 +7,7 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "expo": "~56.0.11",
     "expo-constants": "~56.0.18",
+    "expo-dev-client": "~56.0.20",
     "expo-font": "~56.0.6",
     "expo-haptics": "~56.0.3",
     "expo-linear-gradient": "~56.0.4",
@@ -30,9 +31,14 @@
   },
   "scripts": {
     "start": "expo start",
-    "android": "expo start --android",
-    "ios": "expo start --ios",
-    "web": "expo start --web"
+    "start:dev": "expo start --dev-client",
+    "android": "expo run:android",
+    "ios": "expo run:ios",
+    "prebuild": "expo prebuild",
+    "prebuild:clean": "expo prebuild --clean",
+    "build:dev": "eas build --profile development --platform android",
+    "build:preview": "eas build --profile preview --platform android",
+    "build:prod": "eas build --profile production --platform android"
   },
   "private": true
 }
