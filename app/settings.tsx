@@ -1,5 +1,5 @@
-import React from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert } from 'react-native';
+import React, { useState, useEffect } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert, Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
@@ -7,9 +7,18 @@ import { useSettingsStore } from '../src/store/settingsStore';
 import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
+import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
+import { initSmsListener } from '../src/lib/smsHandler';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
+  const [smsGranted, setSmsGranted] = useState(false);
+
+  useEffect(() => {
+    if (Platform.OS === 'android' && smsAvailable) {
+      checkSmsPermission().then(setSmsGranted);
+    }
+  }, []);
   const themeMode = useSettingsStore((s) => s.themeMode);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const resetOnboarding = useWalletStore((s) => s.resetOnboarding);
@@ -111,13 +120,37 @@ export default function SettingsScreen() {
       {/* Permissions section (placeholder for Phase 5-6) */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>PERMISSIONS</Text>
-        <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Pressable
+          onPress={async () => {
+            if (!smsAvailable) {
+              Alert.alert('Not available', 'SMS listening is only available on Android.');
+              return;
+            }
+            if (smsGranted) {
+              Alert.alert('Already granted', 'SMS permission is already enabled.');
+              return;
+            }
+            await requestSmsPermission();
+            // Re-check after a short delay (permission dialog is async)
+            setTimeout(async () => {
+              const granted = await checkSmsPermission();
+              setSmsGranted(granted);
+              if (granted) {
+                initSmsListener();
+                Alert.alert('SMS Access Granted', 'Flux will now read incoming SMS to update balances.');
+              }
+            }, 1000);
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>SMS Access</Text>
-            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Not yet configured</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              {smsGranted ? 'Granted — listening for SMS' : 'Tap to request permission'}
+            </Text>
           </View>
-          <View style={[styles.statusDot, { backgroundColor: theme.warning }]} />
-        </View>
+          <View style={[styles.statusDot, { backgroundColor: smsGranted ? theme.success : theme.warning }]} />
+        </Pressable>
         <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Notification Access</Text>

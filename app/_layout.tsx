@@ -1,13 +1,14 @@
-import React, { useCallback } from 'react';
+import React, { useCallback, useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
-import { View } from 'react-native';
+import { Platform, View } from 'react-native';
 import { useFonts, Sora_400Regular, Sora_500Medium, Sora_600SemiBold, Sora_700Bold } from '@expo-google-fonts/sora';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeContext, darkTheme, lightTheme } from '../src/theme';
 import { useSettingsStore } from '../src/store/settingsStore';
+import { initSmsListener } from '../src/lib/smsHandler';
+import { checkSmsPermission } from '../modules/sms-listener';
 
-// Keep splash screen visible while fonts load
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -20,6 +21,15 @@ export default function RootLayout() {
     Sora_600SemiBold,
     Sora_700Bold,
   });
+
+  // Initialize SMS listener if permission is already granted
+  useEffect(() => {
+    if (Platform.OS === 'android') {
+      checkSmsPermission().then((granted) => {
+        if (granted) initSmsListener();
+      });
+    }
+  }, []);
 
   const onLayoutRootView = useCallback(async () => {
     if (fontsLoaded) {
