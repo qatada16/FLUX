@@ -11,6 +11,7 @@ import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable }
 import { checkNotificationPermission, openNotificationSettings, isAvailable as notifAvailable } from '../modules/notification-listener';
 import { initSmsListener } from '../src/lib/smsHandler';
 import { initNotificationListener } from '../src/lib/notificationHandler';
+import { requestBatteryOptimizationExclusion } from '../src/lib/battery';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -205,6 +206,20 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.statusDot, { backgroundColor: notifGranted ? theme.success : theme.warning }]} />
         </Pressable>
+        {Platform.OS === 'android' && (
+          <Pressable
+            onPress={requestBatteryOptimizationExclusion}
+            style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Battery Optimization</Text>
+              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+                Tap to exclude Flux from battery restrictions
+              </Text>
+            </View>
+            <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>→</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Appearance */}

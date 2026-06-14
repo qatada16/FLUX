@@ -1,6 +1,6 @@
-import React, { useState, useCallback } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable } from 'react-native';
-import Animated, { FadeInDown } from 'react-native-reanimated';
+import React, { useState, useCallback, useEffect, useRef } from 'react';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform } from 'react-native';
+import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PieChart, BarChart } from 'react-native-gifted-charts';
 import { router } from 'expo-router';
@@ -11,20 +11,42 @@ import { useAuthStore } from '../src/store/authStore';
 import { pullWalletsFromCloud } from '../src/lib/sync';
 import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
+import { EmptyState } from '../src/components/EmptyState';
+import { ErrorBanner } from '../src/components/ErrorBanner';
+import { showBatteryOptimizationPrompt } from '../src/lib/battery';
+import { useSettingsStore } from '../src/store/settingsStore';
 
 export default function DashboardScreen() {
   const { theme } = useTheme();
   const wallets = useWalletStore((s) => s.wallets);
   const [refreshing, setRefreshing] = useState(false);
+  const [syncError, setSyncError] = useState<string | null>(null);
   const [highlightedWalletId, setHighlightedWalletId] = useState<string | null>(null);
+  const batteryPromptShown = useRef(false);
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
 
+  // Show battery optimization prompt once if there are SMS/notification wallets
+  useEffect(() => {
+    if (batteryPromptShown.current) return;
+    if (Platform.OS !== 'android') return;
+    const hasAutoTracking = wallets.some(
+      (w) => w.trackingMethod === 'sms' || w.trackingMethod === 'notification'
+    );
+    if (hasAutoTracking) {
+      batteryPromptShown.current = true;
+      // Delay so the dashboard has time to render first
+      setTimeout(showBatteryOptimizationPrompt, 2000);
+    }
+  }, [wallets]);
+
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
+    setSyncError(null);
     const user = useAuthStore.getState().user;
     if (user) {
-      await pullWalletsFromCloud(user.id);
+      const ok = await pullWalletsFromCloud(user.id);
+      if (!ok) setSyncError('Could not sync with cloud. Pull down to retry.');
     }
     setRefreshing(false);
   }, []);
@@ -57,6 +79,22 @@ export default function DashboardScreen() {
 
   const maxBarValue = Math.max(...wallets.map((w) => w.balance), 1);
 
+  // Empty state
+  if (wallets.length === 0) {
+    return (
+      <View style={[styles.container, { backgroundColor: theme.background }]}>
+        <View style={[styles.content, { flex: 1, justifyContent: 'center' }]}>
+          <EmptyState
+            title="No Accounts Yet"
+            message="Add your wallets and bank accounts to start tracking all your balances in one place."
+            actionLabel="Add Wallets"
+            onAction={() => router.push('/onboarding/select-wallets')}
+          />
+        </View>
+      </View>
+    );
+  }
+
   return (
     <ScrollView
       style={[styles.container, { backgroundColor: theme.background }]}
@@ -73,7 +111,7 @@ export default function DashboardScreen() {
       }
     >
       {/* Header */}
-      <Animated.View entering={FadeInDown.duration(500)} style={styles.headerRow}>
+      <Animated.View entering={FadeInDown.duration(400)} style={styles.headerRow}>
         <View>
           <Text style={[styles.greeting, { color: theme.textSecondary }]}>
             Your Portfolio
@@ -83,15 +121,23 @@ export default function DashboardScreen() {
           </Text>
         </View>
         <Pressable
-          onPress={() => router.push('/settings')}
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/settings');
+          }}
           style={[styles.settingsBtn, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
           <Text style={[styles.settingsIcon, { color: theme.textSecondary }]}>⚙</Text>
         </Pressable>
       </Animated.View>
 
+      {/* Sync error banner */}
+      {syncError && (
+        <ErrorBanner message={syncError} onDismiss={() => setSyncError(null)} />
+      )}
+
       {/* Hero total balance */}
-      <Animated.View entering={FadeInDown.delay(100).duration(500)}>
+      <Animated.View entering={FadeInDown.delay(80).duration(400)}>
         <LinearGradient
           colors={[theme.accentPrimary, theme.accentSecondary]}
           start={{ x: 0, y: 0 }}
@@ -112,7 +158,7 @@ export default function DashboardScreen() {
 
       {/* Donut Chart */}
       {pieData.length > 0 && (
-        <Animated.View entering={FadeInDown.delay(200).duration(500)}>
+        <Animated.View entering={FadeInDown.delay(160).duration(400)}>
           <View style={[styles.chartCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
               DISTRIBUTION
@@ -168,7 +214,7 @@ export default function DashboardScreen() {
 
       {/* Bar Chart */}
       {barData.length > 0 && (
-        <Animated.View entering={FadeInDown.delay(300).duration(500)}>
+        <Animated.View entering={FadeInDown.delay(240).duration(400)}>
           <View style={[styles.chartCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
               COMPARISON
@@ -198,9 +244,11 @@ export default function DashboardScreen() {
       )}
 
       {/* Wallet List */}
-      <Text style={[styles.sectionTitleStandalone, { color: theme.textSecondary }]}>
-        YOUR ACCOUNTS
-      </Text>
+      <Animated.View entering={FadeInDown.delay(320).duration(400)}>
+        <Text style={[styles.sectionTitleStandalone, { color: theme.textSecondary }]}>
+          YOUR ACCOUNTS
+        </Text>
+      </Animated.View>
       {wallets.map((wallet, index) => (
         <WalletCard
           key={wallet.id}
@@ -213,6 +261,9 @@ export default function DashboardScreen() {
           }}
         />
       ))}
+
+      {/* Bottom padding for safe area */}
+      <View style={{ height: 20 }} />
     </ScrollView>
   );
 }

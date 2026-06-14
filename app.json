@@ -19,6 +19,11 @@
       },
       "package": "com.flux.app"
     },
+    "splash": {
+      "image": "./assets/splash-icon.png",
+      "resizeMode": "contain",
+      "backgroundColor": "#0B0E14"
+    },
     "web": {
       "favicon": "./assets/favicon.png"
     },
