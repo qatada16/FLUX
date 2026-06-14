@@ -7,6 +7,8 @@ import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
 import { useWalletStore } from '../src/store/walletStore';
+import { useAuthStore } from '../src/store/authStore';
+import { pullWalletsFromCloud } from '../src/lib/sync';
 import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
 
@@ -18,10 +20,13 @@ export default function DashboardScreen() {
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
 
-  const onRefresh = useCallback(() => {
+  const onRefresh = useCallback(async () => {
     setRefreshing(true);
-    // In Phase 4 this will re-sync with Supabase
-    setTimeout(() => setRefreshing(false), 800);
+    const user = useAuthStore.getState().user;
+    if (user) {
+      await pullWalletsFromCloud(user.id);
+    }
+    setRefreshing(false);
   }, []);
 
   // Donut chart data

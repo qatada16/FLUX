@@ -15,6 +15,8 @@ import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../../src/theme';
 import { useWalletStore } from '../../src/store/walletStore';
+import { useAuthStore } from '../../src/store/authStore';
+import { pushBalanceUpdate, deleteWalletFromCloud, pushAllWalletsToCloud } from '../../src/lib/sync';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import type { TrackingMethod } from '../../src/types/wallet';
 
@@ -72,6 +74,17 @@ export default function WalletDetailScreen() {
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setIsEditing(false);
+
+    // Sync to cloud in background
+    const user = useAuthStore.getState().user;
+    if (user) {
+      if (newBalance !== wallet.balance) {
+        pushBalanceUpdate(wallet.id, newBalance);
+      }
+      if (editMethod && editMethod !== wallet.trackingMethod) {
+        pushAllWalletsToCloud(user.id);
+      }
+    }
   };
 
   const confirmDelete = () => {
@@ -84,7 +97,9 @@ export default function WalletDetailScreen() {
           text: 'Remove',
           style: 'destructive',
           onPress: () => {
+            const user = useAuthStore.getState().user;
             removeWallet(wallet.id);
+            if (user) deleteWalletFromCloud(wallet.id);
             Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
             router.back();
           },

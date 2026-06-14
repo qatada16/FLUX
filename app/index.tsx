@@ -2,23 +2,43 @@ import { useEffect } from 'react';
 import { router } from 'expo-router';
 import { View, ActivityIndicator } from 'react-native';
 import { useWalletStore } from '../src/store/walletStore';
+import { useAuthStore } from '../src/store/authStore';
 import { useTheme } from '../src/theme';
+import { pullWalletsFromCloud } from '../src/lib/sync';
 
 export default function IndexScreen() {
   const { theme } = useTheme();
   const hasCompletedOnboarding = useWalletStore((s) => s.hasCompletedOnboarding);
+  const initialize = useAuthStore((s) => s.initialize);
 
   useEffect(() => {
-    // Small delay to let Zustand hydrate from AsyncStorage
-    const timer = setTimeout(() => {
-      if (hasCompletedOnboarding) {
+    const boot = async () => {
+      // Initialize auth (checks for existing session)
+      await initialize();
+      const user = useAuthStore.getState().user;
+
+      if (user) {
+        // Logged in — try to pull fresh data from cloud
+        await pullWalletsFromCloud(user.id);
+        const hasWallets = useWalletStore.getState().hasCompletedOnboarding;
+        if (hasWallets) {
+          router.replace('/dashboard');
+        } else {
+          router.replace('/onboarding/welcome');
+        }
+      } else if (hasCompletedOnboarding) {
+        // Not logged in but has local data — go to dashboard
         router.replace('/dashboard');
       } else {
-        router.replace('/onboarding/welcome');
+        // Fresh install — show auth (with skip option)
+        router.replace('/auth/login');
       }
-    }, 100);
+    };
+
+    // Small delay for Zustand hydration
+    const timer = setTimeout(boot, 150);
     return () => clearTimeout(timer);
-  }, [hasCompletedOnboarding]);
+  }, []);
 
   return (
     <View style={{ flex: 1, backgroundColor: theme.background, alignItems: 'center', justifyContent: 'center' }}>

@@ -1,10 +1,12 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useWalletStore } from '../src/store/walletStore';
+import { useAuthStore } from '../src/store/authStore';
+import { pushAllWalletsToCloud } from '../src/lib/sync';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -12,6 +14,27 @@ export default function SettingsScreen() {
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const resetOnboarding = useWalletStore((s) => s.resetOnboarding);
   const wallets = useWalletStore((s) => s.wallets);
+  const user = useAuthStore((s) => s.user);
+  const signOut = useAuthStore((s) => s.signOut);
+
+  const handleSync = async () => {
+    if (!user) {
+      router.push('/auth/login');
+      return;
+    }
+    const ok = await pushAllWalletsToCloud(user.id);
+    if (ok) {
+      Alert.alert('Synced!', 'All wallets backed up to cloud.');
+    } else {
+      Alert.alert('Sync failed', 'Could not sync to cloud. Check your connection.');
+    }
+  };
+
+  const handleSignOut = async () => {
+    await signOut();
+    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
+    Alert.alert('Signed out', 'You are now using Flux offline.');
+  };
 
   return (
     <ScrollView
@@ -25,6 +48,48 @@ export default function SettingsScreen() {
         </Pressable>
         <Text style={[styles.title, { color: theme.textPrimary }]}>Settings</Text>
         <View style={{ width: 50 }} />
+      </View>
+
+      {/* Account section */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ACCOUNT</Text>
+        {user ? (
+          <>
+            <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+              <View style={{ flex: 1 }}>
+                <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Signed in as</Text>
+                <Text style={[styles.rowHint, { color: theme.accentPrimary }]}>{user.email}</Text>
+              </View>
+              <View style={[styles.statusDot, { backgroundColor: theme.success }]} />
+            </View>
+            <Pressable
+              onPress={handleSync}
+              style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            >
+              <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Sync Now</Text>
+              <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>↑</Text>
+            </Pressable>
+            <Pressable
+              onPress={handleSignOut}
+              style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+            >
+              <Text style={[styles.rowLabel, { color: theme.danger }]}>Sign Out</Text>
+            </Pressable>
+          </>
+        ) : (
+          <Pressable
+            onPress={() => router.push('/auth/login')}
+            style={[styles.row, { backgroundColor: theme.accentPrimary + '15', borderColor: theme.accentPrimary + '40' }]}
+          >
+            <View style={{ flex: 1 }}>
+              <Text style={[styles.rowLabel, { color: theme.accentPrimary }]}>Sign In</Text>
+              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+                Back up your wallets to the cloud
+              </Text>
+            </View>
+            <Text style={[styles.rowArrow, { color: theme.accentPrimary }]}>→</Text>
+          </Pressable>
+        )}
       </View>
 
       {/* Wallets section */}
@@ -49,25 +114,16 @@ export default function SettingsScreen() {
         <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>SMS Access</Text>
-            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Coming in Phase 5</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Not yet configured</Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: theme.warning }]} />
         </View>
         <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Notification Access</Text>
-            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Coming in Phase 6</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Not yet configured</Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: theme.warning }]} />
-        </View>
-      </View>
-
-      {/* Account section (placeholder for Phase 4) */}
-      <View style={styles.section}>
-        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ACCOUNT</Text>
-        <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-          <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Supabase Sync</Text>
-          <Text style={[styles.rowValue, { color: theme.warning }]}>Phase 4</Text>
         </View>
       </View>
 
@@ -93,9 +149,18 @@ export default function SettingsScreen() {
         <Text style={[styles.sectionTitle, { color: theme.danger }]}>DANGER ZONE</Text>
         <Pressable
           onPress={() => {
-            Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-            resetOnboarding();
-            router.replace('/');
+            Alert.alert('Reset All Data', 'This will remove all wallets and settings. Are you sure?', [
+              { text: 'Cancel', style: 'cancel' },
+              {
+                text: 'Reset',
+                style: 'destructive',
+                onPress: () => {
+                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                  resetOnboarding();
+                  router.replace('/');
+                },
+              },
+            ]);
           }}
           style={[styles.row, { backgroundColor: theme.danger + '12', borderColor: theme.danger + '30' }]}
         >

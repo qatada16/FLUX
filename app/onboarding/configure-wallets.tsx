@@ -14,6 +14,8 @@ import { useTheme, chartPalette } from '../../src/theme';
 import { providerTemplates } from '../../src/constants/providers';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import { useWalletStore } from '../../src/store/walletStore';
+import { useAuthStore } from '../../src/store/authStore';
+import { pushAllWalletsToCloud } from '../../src/lib/sync';
 import type { Wallet, TrackingMethod } from '../../src/types/wallet';
 
 interface WalletConfig {
@@ -92,7 +94,14 @@ export default function ConfigureWalletsScreen() {
         addWallet(wallet);
       });
       completeOnboarding();
-      router.replace('/');
+
+      // Sync to cloud if logged in
+      const user = useAuthStore.getState().user;
+      if (user) {
+        pushAllWalletsToCloud(user.id);
+      }
+
+      router.replace('/dashboard');
     } else {
       setCurrentIndex((i) => i + 1);
       scrollRef.current?.scrollTo({ y: 0, animated: true });
