@@ -8,16 +8,25 @@ import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
 import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
+import { checkNotificationPermission, openNotificationSettings, isAvailable as notifAvailable } from '../modules/notification-listener';
 import { initSmsListener } from '../src/lib/smsHandler';
+import { initNotificationListener } from '../src/lib/notificationHandler';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
   const [smsGranted, setSmsGranted] = useState(false);
+  const [notifGranted, setNotifGranted] = useState(false);
+
+  // Check permissions on mount and when returning from settings
+  const checkPermissions = () => {
+    if (Platform.OS === 'android') {
+      if (smsAvailable) checkSmsPermission().then(setSmsGranted);
+      if (notifAvailable) checkNotificationPermission().then(setNotifGranted);
+    }
+  };
 
   useEffect(() => {
-    if (Platform.OS === 'android' && smsAvailable) {
-      checkSmsPermission().then(setSmsGranted);
-    }
+    checkPermissions();
   }, []);
   const themeMode = useSettingsStore((s) => s.themeMode);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
@@ -151,13 +160,51 @@ export default function SettingsScreen() {
           </View>
           <View style={[styles.statusDot, { backgroundColor: smsGranted ? theme.success : theme.warning }]} />
         </Pressable>
-        <View style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}>
+        <Pressable
+          onPress={() => {
+            if (!notifAvailable) {
+              Alert.alert('Not available', 'Notification listening is only available on Android.');
+              return;
+            }
+            if (notifGranted) {
+              Alert.alert('Already granted', 'Notification access is already enabled.');
+              return;
+            }
+            Alert.alert(
+              'Enable Notification Access',
+              'Android requires you to manually enable notification access.\n\nTap OK to open Settings, then find "Flux" in the list and toggle it ON.',
+              [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Open Settings',
+                  onPress: () => {
+                    openNotificationSettings();
+                    // Re-check when user comes back (they'll tap back)
+                    setTimeout(() => {
+                      checkNotificationPermission().then((granted) => {
+                        setNotifGranted(granted);
+                        if (granted) {
+                          initNotificationListener();
+                        }
+                      });
+                    }, 3000);
+                  },
+                },
+              ]
+            );
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Notification Access</Text>
-            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>Not yet configured</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              {notifGranted
+                ? 'Granted — listening for notifications'
+                : 'Tap to open settings (manual toggle required)'}
+            </Text>
           </View>
-          <View style={[styles.statusDot, { backgroundColor: theme.warning }]} />
-        </View>
+          <View style={[styles.statusDot, { backgroundColor: notifGranted ? theme.success : theme.warning }]} />
+        </Pressable>
       </View>
 
       {/* Appearance */}

@@ -7,7 +7,9 @@ import * as SplashScreen from 'expo-splash-screen';
 import { ThemeContext, darkTheme, lightTheme } from '../src/theme';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { initSmsListener } from '../src/lib/smsHandler';
+import { initNotificationListener } from '../src/lib/notificationHandler';
 import { checkSmsPermission } from '../modules/sms-listener';
+import { checkNotificationPermission } from '../modules/notification-listener';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -22,11 +24,14 @@ export default function RootLayout() {
     Sora_700Bold,
   });
 
-  // Initialize SMS listener if permission is already granted
+  // Initialize native listeners if permissions are already granted
   useEffect(() => {
     if (Platform.OS === 'android') {
       checkSmsPermission().then((granted) => {
         if (granted) initSmsListener();
+      });
+      checkNotificationPermission().then((granted) => {
+        if (granted) initNotificationListener();
       });
     }
   }, []);
