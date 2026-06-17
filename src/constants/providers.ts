@@ -94,7 +94,18 @@ export const providerTemplates: ProviderTemplate[] = [
   },
 ];
 
-// Assign a color from the chart palette to each provider
-export function getProviderColor(index: number): string {
+// Assign a deterministic color from the chart palette to each provider
+// based on its position in the providerTemplates list, so every provider
+// always gets the same unique color regardless of when it was added.
+export function getProviderColor(providerKey: string): string {
+  const index = providerTemplates.findIndex((p) => p.key === providerKey);
+  // Fallback to a hash-based index for unknown keys
+  if (index === -1) {
+    let hash = 0;
+    for (let i = 0; i < providerKey.length; i++) {
+      hash = (hash * 31 + providerKey.charCodeAt(i)) | 0;
+    }
+    return chartPalette[Math.abs(hash) % chartPalette.length];
+  }
   return chartPalette[index % chartPalette.length];
 }

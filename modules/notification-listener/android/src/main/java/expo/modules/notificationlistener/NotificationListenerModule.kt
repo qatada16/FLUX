@@ -32,10 +32,12 @@ class NotificationListenerModule : Module() {
     // Open the Android Notification Access settings screen.
     // There's no popup for this — the user must toggle it manually.
     Function("openSettings") {
-      val activity = appContext.currentActivity ?: return@Function
-      val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
-      intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
-      activity.startActivity(intent)
+      val activity = appContext.currentActivity
+      if (activity != null) {
+        val intent = Intent(Settings.ACTION_NOTIFICATION_LISTENER_SETTINGS)
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        activity.startActivity(intent)
+      }
     }
 
     // Register the static callback so the service can forward events to JS

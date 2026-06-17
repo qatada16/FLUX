@@ -1,21 +1,23 @@
 import type { ParserConfig, ParseResult } from './types';
 
-// Helper: extract a number from a string like "Rs.1,234.56" or "PKR 1234.56"
+// Helper: extract a number from a string like "Rs.1,234.56", "RS 1234", "rs500", "PKR 1234.56"
+// Handles all case/spacing/dot combinations.
 function extractAmount(text: string): number | null {
-  // Match patterns like Rs.1,234.56 or PKR 1234 or Rs 500.00
-  const match = text.match(/(?:Rs\.?|PKR)\s*([\d,]+(?:\.\d{1,2})?)/i);
+  // Match patterns like:
+  //   Rs.1,234.56 | Rs 500 | RS500 | rs. 1234 | PKR 1234 | pkr 500.00
+  const match = text.match(/(?:Rs\.?\s*|PKR\.?\s*)([\d,]+(?:\.\d{1,2})?)/i);
   if (!match) return null;
   const cleaned = match[1].replace(/,/g, '');
   const amount = parseFloat(cleaned);
-  return isNaN(amount) ? null : amount;
+  return isNaN(amount) || amount <= 0 ? null : amount;
 }
 
-// Generic parser that tries to identify credit/debit from common keywords
+// Generic parser that identifies credit/debit from common keywords.
+// Primary logic: look for "sent" → debit, "received" → credit, plus
+// other common banking keywords.
 function genericParse(body: string): ParseResult | null {
   const amount = extractAmount(body);
-  if (!amount || amount <= 0) return null;
-
-  const lowerBody = body.toLowerCase();
+  if (!amount) return null;
 
   // Skip non-transactional messages
   const skipPatterns = [
@@ -24,14 +26,14 @@ function genericParse(body: string): ParseResult | null {
   ];
   if (skipPatterns.some((p) => p.test(body))) return null;
 
-  // Credit indicators
+  // Credit indicators (money coming in)
   const creditPatterns = [
     /\breceived\b/i, /\bcredited\b/i, /\bcredit\b/i,
     /\bdeposit(?:ed)?\b/i, /\btransfer(?:red)?\s+to\s+your\b/i,
     /\bincoming\b/i, /\bcash\s*in\b/i,
   ];
 
-  // Debit indicators
+  // Debit indicators (money going out)
   const debitPatterns = [
     /\bsent\b/i, /\bdebited\b/i, /\bdebit\b/i,
     /\bwithdra(?:wn?|wal)\b/i, /\bpaid\b/i, /\bpayment\b/i,
@@ -39,13 +41,29 @@ function genericParse(body: string): ParseResult | null {
     /\bpurchase\b/i,
   ];
 
-  const isCredit = creditPatterns.some((p) => p.test(body));
-  const isDebit = debitPatterns.some((p) => p.test(body));
+  // Find earliest matching position for each direction
+  const findEarliestMatch = (patterns: RegExp[]): number => {
+    let earliest = Infinity;
+    for (const p of patterns) {
+      const m = body.search(p);
+      if (m !== -1 && m < earliest) earliest = m;
+    }
+    return earliest;
+  };
 
-  // If we can't confidently classify, return null (don't guess)
+  const creditPos = findEarliestMatch(creditPatterns);
+  const debitPos = findEarliestMatch(debitPatterns);
+
+  const isCredit = creditPos < Infinity;
+  const isDebit = debitPos < Infinity;
+
+  // If neither matches, we can't classify
   if (!isCredit && !isDebit) return null;
-  // If both match somehow, return null (ambiguous)
-  if (isCredit && isDebit) return null;
+
+  // If both match, use whichever keyword appeared first in the message
+  if (isCredit && isDebit) {
+    return { amount, direction: creditPos < debitPos ? 'credit' : 'debit' };
+  }
 
   return { amount, direction: isCredit ? 'credit' : 'debit' };
 }

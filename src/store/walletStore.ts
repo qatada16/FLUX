@@ -2,6 +2,7 @@ import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
 import type { Wallet } from '../types/wallet';
+import { uuidv4, isUuid } from '../lib/uuid';
 
 interface WalletState {
   wallets: Wallet[];
@@ -56,6 +57,19 @@ export const useWalletStore = create<WalletState>()(
     {
       name: 'flux-wallet-storage',
       storage: createJSONStorage(() => AsyncStorage),
+      version: 1,
+      // Migrate legacy wallets whose id was a slug like "jazzcash-<ts>-<i>"
+      // instead of a UUID. Supabase's wallets.id column is `uuid`, so those
+      // ids could never sync to the cloud. Replace them with real UUIDs.
+      migrate: (persisted, _version) => {
+        const state = persisted as Partial<WalletState> | undefined;
+        if (state && Array.isArray(state.wallets)) {
+          state.wallets = state.wallets.map((w) =>
+            isUuid(w.id) ? w : { ...w, id: uuidv4() }
+          );
+        }
+        return state as WalletState;
+      },
     }
   )
 );

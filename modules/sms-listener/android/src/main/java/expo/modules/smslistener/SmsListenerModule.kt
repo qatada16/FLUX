@@ -61,34 +61,37 @@ class SmsListenerModule : Module() {
 
     // Register the broadcast receiver
     Function("startListening") {
-      val context = appContext.reactContext ?: return@Function
-      if (receiver != null) return@Function // Already listening
+      val context = appContext.reactContext
+      // Only register if we have a context and aren't already listening
+      if (context != null && receiver == null) {
+        receiver = SmsBroadcastReceiver { sender, body, timestamp ->
+          sendEvent("onSmsReceived", mapOf(
+            "sender" to sender,
+            "body" to body,
+            "timestamp" to timestamp
+          ))
+        }
 
-      receiver = SmsBroadcastReceiver { sender, body, timestamp ->
-        sendEvent("onSmsReceived", mapOf(
-          "sender" to sender,
-          "body" to body,
-          "timestamp" to timestamp
-        ))
-      }
-
-      val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
-      filter.priority = 999
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-        context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
-      } else {
-        context.registerReceiver(receiver, filter)
+        val filter = IntentFilter(Telephony.Sms.Intents.SMS_RECEIVED_ACTION)
+        filter.priority = 999
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
+          context.registerReceiver(receiver, filter, Context.RECEIVER_EXPORTED)
+        } else {
+          context.registerReceiver(receiver, filter)
+        }
       }
     }
 
     // Unregister the broadcast receiver
     Function("stopListening") {
-      val context = appContext.reactContext ?: return@Function
-      receiver?.let {
-        try {
-          context.unregisterReceiver(it)
-        } catch (_: Exception) {}
-        receiver = null
+      val context = appContext.reactContext
+      if (context != null) {
+        receiver?.let {
+          try {
+            context.unregisterReceiver(it)
+          } catch (_: Exception) {}
+          receiver = null
+        }
       }
     }
 

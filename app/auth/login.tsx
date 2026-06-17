@@ -41,12 +41,13 @@ export default function LoginScreen() {
     // After login, try to pull wallets from cloud
     const user = useAuthStore.getState().user;
     if (user) {
-      const pulled = await pullWalletsFromCloud(user.id);
-      if (pulled) {
+      const result = await pullWalletsFromCloud(user.id);
+      if (result === 'found') {
         // Cloud had wallets — go to dashboard
         router.replace('/dashboard');
       } else if (hasCompletedOnboarding) {
-        // Local wallets exist but not in cloud — push them up
+        // Local wallets exist but not in cloud (empty or fetch error) —
+        // push them up so the cloud is seeded, then continue.
         await pushAllWalletsToCloud(user.id);
         router.replace('/dashboard');
       } else {

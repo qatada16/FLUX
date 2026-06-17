@@ -2,8 +2,14 @@ import { supabase } from './supabase';
 import { useWalletStore } from '../store/walletStore';
 import type { Wallet } from '../types/wallet';
 
+// Result of a cloud pull: distinguishes a real failure ('error') from a
+// successful request that simply found no rows ('empty'). Callers must not
+// treat 'empty' as an error (that was the cause of the false "Could not sync
+// with cloud" banner).
+export type PullResult = 'found' | 'empty' | 'error';
+
 // Pull all wallets for the current user from Supabase into the local store.
-export async function pullWalletsFromCloud(userId: string): Promise<boolean> {
+export async function pullWalletsFromCloud(userId: string): Promise<PullResult> {
   try {
     const { data, error } = await supabase
       .from('wallets')
@@ -12,7 +18,7 @@ export async function pullWalletsFromCloud(userId: string): Promise<boolean> {
 
     if (error) {
       console.error('Pull wallets error:', error.message);
-      return false;
+      return 'error';
     }
 
     if (data && data.length > 0) {
@@ -35,13 +41,13 @@ export async function pullWalletsFromCloud(userId: string): Promise<boolean> {
       if (!useWalletStore.getState().hasCompletedOnboarding) {
         useWalletStore.getState().completeOnboarding();
       }
-      return true;
+      return 'found';
     }
 
-    return false; // No wallets found — user needs onboarding
+    return 'empty'; // No wallets in cloud — not an error
   } catch (err) {
     console.error('Pull wallets exception:', err);
-    return false;
+    return 'error';
   }
 }
 

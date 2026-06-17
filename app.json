@@ -17,19 +17,34 @@
         "backgroundImage": "./assets/android-icon-background.png",
         "monochromeImage": "./assets/android-icon-monochrome.png"
       },
-      "package": "com.flux.app"
-    },
-    "splash": {
-      "image": "./assets/splash-icon.png",
-      "resizeMode": "contain",
-      "backgroundColor": "#0B0E14"
+      "package": "com.flux.app",
+      "permissions": [
+        "android.permission.RECEIVE_SMS",
+        "android.permission.READ_SMS",
+        "android.permission.POST_NOTIFICATIONS",
+        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+      ]
     },
     "web": {
       "favicon": "./assets/favicon.png"
     },
     "plugins": [
       "expo-router",
-      "expo-font"
-    ]
+      "expo-font",
+      [
+        "expo-splash-screen",
+        {
+          "image": "./assets/splash-icon.png",
+          "resizeMode": "contain",
+          "backgroundColor": "#0B0E14"
+        }
+      ]
+    ],
+    "extra": {
+      "router": {},
+      "eas": {
+        "projectId": "dee5db89-5d56-4941-bae9-260069b18c96"
+      }
+    }
   }
 }

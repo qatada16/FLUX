@@ -15,16 +15,28 @@ import { EmptyState } from '../src/components/EmptyState';
 import { ErrorBanner } from '../src/components/ErrorBanner';
 import { showBatteryOptimizationPrompt } from '../src/lib/battery';
 import { useSettingsStore } from '../src/store/settingsStore';
+import { getProviderColor } from '../src/constants/providers';
 
 export default function DashboardScreen() {
   const { theme } = useTheme();
   const wallets = useWalletStore((s) => s.wallets);
+  const updateWallet = useWalletStore((s) => s.updateWallet);
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [highlightedWalletId, setHighlightedWalletId] = useState<string | null>(null);
   const batteryPromptShown = useRef(false);
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
+
+  // Fix wallet colors: ensure each wallet uses its deterministic provider color
+  useEffect(() => {
+    for (const w of wallets) {
+      const correctColor = getProviderColor(w.providerKey);
+      if (w.color !== correctColor) {
+        updateWallet(w.id, { color: correctColor });
+      }
+    }
+  }, []); // Run once on mount
 
   // Show battery optimization prompt once if there are SMS/notification wallets
   useEffect(() => {
@@ -45,8 +57,10 @@ export default function DashboardScreen() {
     setSyncError(null);
     const user = useAuthStore.getState().user;
     if (user) {
-      const ok = await pullWalletsFromCloud(user.id);
-      if (!ok) setSyncError('Could not sync with cloud. Pull down to retry.');
+      const result = await pullWalletsFromCloud(user.id);
+      if (result === 'error') {
+        setSyncError('Could not sync with cloud. Pull down to retry.');
+      }
     }
     setRefreshing(false);
   }, []);

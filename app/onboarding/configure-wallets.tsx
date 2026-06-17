@@ -10,12 +10,13 @@ import {
   Platform,
 } from 'react-native';
 import { router, useLocalSearchParams } from 'expo-router';
-import { useTheme, chartPalette } from '../../src/theme';
-import { providerTemplates } from '../../src/constants/providers';
+import { useTheme } from '../../src/theme';
+import { providerTemplates, getProviderColor } from '../../src/constants/providers';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import { useWalletStore } from '../../src/store/walletStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { pushAllWalletsToCloud } from '../../src/lib/sync';
+import { uuidv4 } from '../../src/lib/uuid';
 import type { Wallet, TrackingMethod } from '../../src/types/wallet';
 
 interface WalletConfig {
@@ -78,7 +79,7 @@ export default function ConfigureWalletsScreen() {
       providers.forEach((provider, index) => {
         const cfg = configs[provider.key];
         const wallet: Wallet = {
-          id: `${provider.key}-${Date.now()}-${index}`,
+          id: uuidv4(),
           providerKey: provider.key,
           displayName: provider.displayName,
           balance: parseFloat(cfg.balance) || 0,
@@ -86,7 +87,7 @@ export default function ConfigureWalletsScreen() {
           trackingMethod: cfg.trackingMethod as TrackingMethod,
           smsSender: cfg.trackingMethod === 'sms' ? cfg.smsSender : undefined,
           notificationPackage: cfg.trackingMethod === 'notification' ? cfg.notificationPackage : undefined,
-          color: chartPalette[index % chartPalette.length],
+          color: getProviderColor(provider.key),
           icon: provider.icon,
           isActive: true,
           updatedAt: new Date().toISOString(),

@@ -4,9 +4,13 @@ import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
 import { providerTemplates, type ProviderTemplate } from '../../src/constants/providers';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
+import { useWalletStore } from '../../src/store/walletStore';
 
 export default function SelectWalletsScreen() {
   const { theme } = useTheme();
+  const existingProviderKeys = useWalletStore((s) =>
+    new Set(s.wallets.map((w) => w.providerKey))
+  );
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const toggle = (key: string) => {
@@ -33,16 +37,27 @@ export default function SelectWalletsScreen() {
     <View style={styles.section}>
       <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>{title}</Text>
       {items.map((provider) => {
+        const isAlreadyAdded = existingProviderKeys.has(provider.key);
         const isSelected = selected.has(provider.key);
         return (
           <Pressable
             key={provider.key}
-            onPress={() => toggle(provider.key)}
+            onPress={() => !isAlreadyAdded && toggle(provider.key)}
+            disabled={isAlreadyAdded}
             style={[
               styles.providerRow,
               {
-                backgroundColor: isSelected ? theme.surfaceElevated : theme.surface,
-                borderColor: isSelected ? theme.accentPrimary : theme.border,
+                backgroundColor: isAlreadyAdded
+                  ? theme.surface
+                  : isSelected
+                    ? theme.surfaceElevated
+                    : theme.surface,
+                borderColor: isAlreadyAdded
+                  ? theme.border
+                  : isSelected
+                    ? theme.accentPrimary
+                    : theme.border,
+                opacity: isAlreadyAdded ? 0.45 : 1,
               },
             ]}
           >
@@ -52,20 +67,34 @@ export default function SelectWalletsScreen() {
                 {provider.displayName}
               </Text>
               <Text style={[styles.providerMethod, { color: theme.textSecondary }]}>
-                Default: {provider.defaultTrackingMethod.toUpperCase()}
+                {isAlreadyAdded ? 'Already added' : `Default: ${provider.defaultTrackingMethod.toUpperCase()}`}
               </Text>
             </View>
-            <View
-              style={[
-                styles.checkbox,
-                {
-                  borderColor: isSelected ? theme.accentPrimary : theme.border,
-                  backgroundColor: isSelected ? theme.accentPrimary : 'transparent',
-                },
-              ]}
-            >
-              {isSelected && <Text style={styles.checkmark}>✓</Text>}
-            </View>
+            {isAlreadyAdded ? (
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    borderColor: theme.border,
+                    backgroundColor: theme.border,
+                  },
+                ]}
+              >
+                <Text style={styles.checkmark}>✓</Text>
+              </View>
+            ) : (
+              <View
+                style={[
+                  styles.checkbox,
+                  {
+                    borderColor: isSelected ? theme.accentPrimary : theme.border,
+                    backgroundColor: isSelected ? theme.accentPrimary : 'transparent',
+                  },
+                ]}
+              >
+                {isSelected && <Text style={styles.checkmark}>✓</Text>}
+              </View>
+            )}
           </Pressable>
         );
       })}
