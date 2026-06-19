@@ -33,6 +33,28 @@ export default function WalletDetailScreen() {
   const [editMethod, setEditMethod] = useState<TrackingMethod | null>(null);
   const [editSender, setEditSender] = useState('');
   const [editPackage, setEditPackage] = useState('');
+  const [newSmsSender, setNewSmsSender] = useState('');
+
+  const handleAddSmsSender = () => {
+    const trimmed = newSmsSender.trim();
+    if (!trimmed) return;
+    const currentSenders = editSender
+      ? editSender.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (!currentSenders.includes(trimmed)) {
+      const updatedSenders = [...currentSenders, trimmed];
+      setEditSender(updatedSenders.join(', '));
+    }
+    setNewSmsSender('');
+  };
+
+  const handleRemoveSmsSender = (senderToRemove: string) => {
+    const currentSenders = editSender
+      ? editSender.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const updatedSenders = currentSenders.filter((s) => s !== senderToRemove);
+    setEditSender(updatedSenders.join(', '));
+  };
 
   if (!wallet) {
     return (
@@ -51,6 +73,7 @@ export default function WalletDetailScreen() {
     setEditMethod(wallet.trackingMethod);
     setEditSender(wallet.smsSender || '');
     setEditPackage(wallet.notificationPackage || '');
+    setNewSmsSender('');
   };
 
   const saveChanges = () => {
@@ -216,16 +239,48 @@ export default function WalletDetailScreen() {
 
               {editMethod === 'sms' && (
                 <View style={styles.configField}>
-                  <Text style={[styles.configFieldLabel, { color: theme.textSecondary }]}>
-                    SMS Sender ID
+                  <Text style={[styles.configFieldLabel, { color: theme.textSecondary, marginBottom: 8 }]}>
+                    SMS Sender IDs
                   </Text>
-                  <TextInput
-                    style={[styles.configInput, { backgroundColor: theme.surfaceElevated, borderColor: theme.border, color: theme.textPrimary }]}
-                    value={editSender}
-                    onChangeText={setEditSender}
-                    placeholder="e.g. 8558"
-                    placeholderTextColor={theme.textSecondary + '60'}
-                  />
+
+                  {/* List of active chips */}
+                  <View style={styles.chipsContainer}>
+                    {(editSender ? editSender.split(',').map(s => s.trim()).filter(Boolean) : []).map((sender) => (
+                      <View key={sender} style={[styles.chip, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                        <Text style={[styles.chipText, { color: theme.textPrimary }]}>{sender}</Text>
+                        <Pressable onPress={() => handleRemoveSmsSender(sender)} style={styles.chipDeleteBtn}>
+                          <Text style={[styles.chipDeleteText, { color: theme.danger }]}>×</Text>
+                        </Pressable>
+                      </View>
+                    ))}
+                    {(editSender ? editSender.split(',').map(s => s.trim()).filter(Boolean) : []).length === 0 && (
+                      <Text style={{ color: theme.danger, fontSize: 13, fontFamily: 'Sora_400Regular', marginBottom: 4 }}>
+                        Please add at least one sender ID.
+                      </Text>
+                    )}
+                  </View>
+
+                  {/* Input field + Add button */}
+                  <View style={styles.smsSenderContainer}>
+                    <TextInput
+                      style={[styles.smsSenderInput, { backgroundColor: theme.surfaceElevated, borderColor: theme.border, color: theme.textPrimary }]}
+                      value={newSmsSender}
+                      onChangeText={setNewSmsSender}
+                      onSubmitEditing={handleAddSmsSender}
+                      placeholder="e.g. 8558"
+                      placeholderTextColor={theme.textSecondary + '60'}
+                      returnKeyType="done"
+                    />
+                    <Pressable
+                      onPress={handleAddSmsSender}
+                      style={({ pressed }) => [
+                        styles.smsAddBtn,
+                        { backgroundColor: theme.accentPrimary, opacity: pressed ? 0.85 : 1 }
+                      ]}
+                    >
+                      <Text style={[styles.smsAddBtnText, { color: '#0B0E14' }]}>+ Add</Text>
+                    </Pressable>
+                  </View>
                 </View>
               )}
 
@@ -443,5 +498,59 @@ const styles = StyleSheet.create({
     fontSize: 15,
     textAlign: 'center',
     marginTop: 16,
+  },
+  smsSenderContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  smsSenderInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    height: 50,
+    fontFamily: 'Sora_400Regular',
+    fontSize: 15,
+  },
+  smsAddBtn: {
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  smsAddBtnText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 15,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipText: {
+    fontFamily: 'Sora_500Medium',
+    fontSize: 14,
+  },
+  chipDeleteBtn: {
+    marginLeft: 8,
+    padding: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chipDeleteText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 18,
+    lineHeight: 18,
   },
 });

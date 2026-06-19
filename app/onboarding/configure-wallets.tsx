@@ -40,6 +40,7 @@ export default function ConfigureWalletsScreen() {
   // Current step index — configure one wallet at a time
   const [currentIndex, setCurrentIndex] = useState(0);
   const scrollRef = useRef<ScrollView>(null);
+  const [newSmsSender, setNewSmsSender] = useState('');
 
   // Config state for each wallet, keyed by provider key
   const [configs, setConfigs] = useState<Record<string, WalletConfig>>(() => {
@@ -65,6 +66,27 @@ export default function ConfigureWalletsScreen() {
       ...prev,
       [currentProvider.key]: { ...prev[currentProvider.key], [field]: value },
     }));
+  };
+
+  const handleAddSmsSender = () => {
+    const trimmed = newSmsSender.trim();
+    if (!trimmed) return;
+    const currentSenders = config.smsSender
+      ? config.smsSender.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    if (!currentSenders.includes(trimmed)) {
+      const updatedSenders = [...currentSenders, trimmed];
+      updateConfig('smsSender', updatedSenders.join(', '));
+    }
+    setNewSmsSender('');
+  };
+
+  const handleRemoveSmsSender = (senderToRemove: string) => {
+    const currentSenders = config.smsSender
+      ? config.smsSender.split(',').map((s) => s.trim()).filter(Boolean)
+      : [];
+    const updatedSenders = currentSenders.filter((s) => s !== senderToRemove);
+    updateConfig('smsSender', updatedSenders.join(', '));
   };
 
   const setTrackingMethod = (method: TrackingMethod) => {
@@ -105,6 +127,7 @@ export default function ConfigureWalletsScreen() {
       router.replace('/dashboard');
     } else {
       setCurrentIndex((i) => i + 1);
+      setNewSmsSender('');
       scrollRef.current?.scrollTo({ y: 0, animated: true });
     }
   };
@@ -112,6 +135,7 @@ export default function ConfigureWalletsScreen() {
   const handleBack = () => {
     if (currentIndex > 0) {
       setCurrentIndex((i) => i - 1);
+      setNewSmsSender('');
       scrollRef.current?.scrollTo({ y: 0, animated: true });
     } else {
       router.back();
@@ -228,17 +252,50 @@ export default function ConfigureWalletsScreen() {
         {config.trackingMethod === 'sms' && (
           <View style={styles.fieldGroup}>
             <Text style={[styles.label, { color: theme.textSecondary }]}>
-              SMS Sender ID
+              SMS Sender IDs
             </Text>
-            <TextInput
-              style={[styles.textInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.textPrimary }]}
-              value={config.smsSender}
-              onChangeText={(v) => updateConfig('smsSender', v)}
-              placeholder="e.g. 8558"
-              placeholderTextColor={theme.textSecondary + '60'}
-            />
+            
+            {/* List of active chips */}
+            <View style={styles.chipsContainer}>
+              {(config.smsSender ? config.smsSender.split(',').map(s => s.trim()).filter(Boolean) : []).map((sender) => (
+                <View key={sender} style={[styles.chip, { backgroundColor: theme.surfaceElevated, borderColor: theme.border }]}>
+                  <Text style={[styles.chipText, { color: theme.textPrimary }]}>{sender}</Text>
+                  <Pressable onPress={() => handleRemoveSmsSender(sender)} style={styles.chipDeleteBtn}>
+                    <Text style={[styles.chipDeleteText, { color: theme.danger }]}>×</Text>
+                  </Pressable>
+                </View>
+              ))}
+              {(config.smsSender ? config.smsSender.split(',').map(s => s.trim()).filter(Boolean) : []).length === 0 && (
+                <Text style={{ color: theme.danger, fontSize: 13, fontFamily: 'Sora_400Regular', marginBottom: 4 }}>
+                  Please add at least one sender ID.
+                </Text>
+              )}
+            </View>
+
+            {/* Input field + Add button */}
+            <View style={styles.smsSenderContainer}>
+              <TextInput
+                style={[styles.smsSenderInput, { backgroundColor: theme.surface, borderColor: theme.border, color: theme.textPrimary }]}
+                value={newSmsSender}
+                onChangeText={setNewSmsSender}
+                onSubmitEditing={handleAddSmsSender}
+                placeholder="e.g. 8558"
+                placeholderTextColor={theme.textSecondary + '60'}
+                returnKeyType="done"
+              />
+              <Pressable
+                onPress={handleAddSmsSender}
+                style={({ pressed }) => [
+                  styles.smsAddBtn,
+                  { backgroundColor: theme.accentPrimary, opacity: pressed ? 0.85 : 1 }
+                ]}
+              >
+                <Text style={[styles.smsAddBtnText, { color: '#0B0E14' }]}>+ Add</Text>
+              </Pressable>
+            </View>
+
             <Text style={[styles.hint, { color: theme.textSecondary }]}>
-              Check your SMS inbox to find the exact sender name/number for {currentProvider.displayName}.
+              Add one or more sender IDs. Check your SMS inbox to find the exact sender name/number (e.g. 8558, Meezan) for {currentProvider.displayName}.
             </Text>
           </View>
         )}
@@ -441,5 +498,59 @@ const styles = StyleSheet.create({
     fontFamily: 'Sora_600SemiBold',
     fontSize: 16,
     color: '#0B0E14',
+  },
+  smsSenderContainer: {
+    flexDirection: 'row',
+    gap: 10,
+    marginBottom: 12,
+  },
+  smsSenderInput: {
+    flex: 1,
+    borderWidth: 1,
+    borderRadius: 14,
+    paddingHorizontal: 16,
+    height: 50,
+    fontFamily: 'Sora_400Regular',
+    fontSize: 15,
+  },
+  smsAddBtn: {
+    borderRadius: 14,
+    paddingHorizontal: 20,
+    height: 50,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  smsAddBtnText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 15,
+  },
+  chipsContainer: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginBottom: 8,
+  },
+  chip: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    borderWidth: 1,
+    borderRadius: 10,
+    paddingHorizontal: 12,
+    paddingVertical: 6,
+  },
+  chipText: {
+    fontFamily: 'Sora_500Medium',
+    fontSize: 14,
+  },
+  chipDeleteBtn: {
+    marginLeft: 8,
+    padding: 2,
+    justifyContent: 'center',
+    alignItems: 'center',
+  },
+  chipDeleteText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 18,
+    lineHeight: 18,
   },
 });

@@ -1,15 +1,37 @@
 import type { ParserConfig, ParseResult } from './types';
 
-// Helper: extract a number from a string like "Rs.1,234.56", "RS 1234", "rs500", "PKR 1234.56"
-// Handles all case/spacing/dot combinations.
-function extractAmount(text: string): number | null {
-  // Match patterns like:
-  //   Rs.1,234.56 | Rs 500 | RS500 | rs. 1234 | PKR 1234 | pkr 500.00
-  const match = text.match(/(?:Rs\.?\s*|PKR\.?\s*)([\d,]+(?:\.\d{1,2})?)/i);
-  if (!match) return null;
-  const cleaned = match[1].replace(/,/g, '');
-  const amount = parseFloat(cleaned);
+// Currency tokens we recognise. Banks/wallets in PK use "Rs", "Rs.", "RS",
+// "PKR", and occasionally "Rs/-" or "PKR." — all case-insensitive.
+const CURRENCY = '(?:Rs\\.?\\/?-?|PKR\\.?)';
+const NUM = '(\\d[\\d,]*(?:\\.\\d{1,2})?)';
+
+// Currency can appear BEFORE the number ("Rs.1,234.56", "PKR 500") or
+// AFTER it ("1,234.56 PKR", "500 Rs"). We try both, then fall back to a
+// number that sits right after a transaction verb/preposition.
+const CURRENCY_PREFIX = new RegExp(`${CURRENCY}\\s*${NUM}`, 'i');
+const CURRENCY_SUFFIX = new RegExp(`${NUM}\\s*${CURRENCY}`, 'i');
+// e.g. "purchase of 1,234.56", "debited for 500", "amount 1234"
+const AMOUNT_NEAR_KEYWORD = new RegExp(
+  `(?:of|for|amount|amt|worth)\\s*:?\\s*${NUM}`,
+  'i'
+);
+
+function toNumber(raw: string | undefined): number | null {
+  if (!raw) return null;
+  const amount = parseFloat(raw.replace(/,/g, ''));
   return isNaN(amount) || amount <= 0 ? null : amount;
+}
+
+// Helper: extract the transaction amount from a message body.
+// Handles currency before/after the number, thousands separators, and
+// decimals. The currency symbol is NOT required to be "Rs." — "PKR" or a
+// bare amount near a keyword also work.
+function extractAmount(text: string): number | null {
+  return (
+    toNumber(text.match(CURRENCY_PREFIX)?.[1]) ??
+    toNumber(text.match(CURRENCY_SUFFIX)?.[1]) ??
+    toNumber(text.match(AMOUNT_NEAR_KEYWORD)?.[1])
+  );
 }
 
 // Generic parser that identifies credit/debit from common keywords.
@@ -19,10 +41,13 @@ function genericParse(body: string): ParseResult | null {
   const amount = extractAmount(body);
   if (!amount) return null;
 
-  // Skip non-transactional messages
+  // Skip non-transactional messages. NOTE: we deliberately do NOT skip on
+  // "balance" alone — real transaction alerts almost always include an
+  // "Available Balance is Rs.X" line. Pure balance-inquiry replies carry no
+  // credit/debit verb and are dropped later by direction detection.
   const skipPatterns = [
-    /\botp\b/i, /\bverification\b/i, /\bpromo\b/i, /\boffer\b/i,
-    /\bbalance\s+(?:is|inquiry|check)/i, /\bpin\b/i,
+    /\botp\b/i, /\bverification\b/i, /\bone[-\s]?time\s+password\b/i,
+    /\bpromo\b/i, /\boffer\b/i, /\bpin\b/i,
   ];
   if (skipPatterns.some((p) => p.test(body))) return null;
 
@@ -30,15 +55,18 @@ function genericParse(body: string): ParseResult | null {
   const creditPatterns = [
     /\breceived\b/i, /\bcredited\b/i, /\bcredit\b/i,
     /\bdeposit(?:ed)?\b/i, /\btransfer(?:red)?\s+to\s+your\b/i,
-    /\bincoming\b/i, /\bcash\s*in\b/i,
+    /\bincoming\b/i, /\bcash\s*in\b/i, /\badded\b/i,
+    /\brefund(?:ed)?\b/i, /\binward\b/i,
   ];
 
   // Debit indicators (money going out)
   const debitPatterns = [
     /\bsent\b/i, /\bdebited\b/i, /\bdebit\b/i,
-    /\bwithdra(?:wn?|wal)\b/i, /\bpaid\b/i, /\bpayment\b/i,
+    /\bwithdra\w*/i, /\bpaid\b/i, /\bpayment\b/i,
     /\btransfer(?:red)?\s+from\b/i, /\bcash\s*out\b/i,
-    /\bpurchase\b/i,
+    /\bpurchase\b/i, /\bspent\b/i, /\bdebit\s*card\b/i,
+    /\bpos\b/i, /\batm\b/i, /\bbill\s*payment\b/i, /\boutgoing\b/i,
+    /\bcharged\b/i,
   ];
 
   // Find earliest matching position for each direction

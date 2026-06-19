@@ -9,6 +9,7 @@ import {
   Platform,
   ActivityIndicator,
   Alert,
+  Image,
 } from 'react-native';
 import { router } from 'expo-router';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -58,14 +59,11 @@ export default function SignUpScreen() {
     >
       {/* Logo */}
       <View style={styles.logoArea}>
-        <LinearGradient
-          colors={[theme.accentPrimary, theme.accentSecondary]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.logoCircle}
-        >
-          <Text style={styles.logoText}>F</Text>
-        </LinearGradient>
+        <Image
+          source={require('../../assets/FLUX.png')}
+          style={styles.logoImage}
+          resizeMode="contain"
+        />
         <Text style={[styles.title, { color: theme.textPrimary }]}>Create Account</Text>
         <Text style={[styles.subtitle, { color: theme.textSecondary }]}>
           Sign up to back up your wallets to the cloud
@@ -140,18 +138,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 36,
   },
-  logoCircle: {
-    width: 64,
-    height: 64,
-    borderRadius: 32,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 20,
-  },
-  logoText: {
-    fontFamily: 'Sora_700Bold',
-    fontSize: 28,
-    color: '#0B0E14',
+  logoImage: {
+    width: 110,
+    height: 110,
+    marginBottom: 8,
   },
   title: {
     fontFamily: 'Sora_700Bold',

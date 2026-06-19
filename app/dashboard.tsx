@@ -2,7 +2,7 @@ import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform } from 'react-native';
 import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
-import { PieChart, BarChart } from 'react-native-gifted-charts';
+import { PieChart } from 'react-native-gifted-charts';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
@@ -79,19 +79,7 @@ export default function DashboardScreen() {
       },
     }));
 
-  // Bar chart data
-  const barData = wallets.map((w) => ({
-    value: w.balance,
-    label: w.displayName.length > 6 ? w.displayName.slice(0, 6) + '..' : w.displayName,
-    frontColor: w.color,
-    topLabelComponent: () => (
-      <Text style={[styles.barTopLabel, { color: theme.textSecondary }]}>
-        {w.balance >= 1000 ? `${(w.balance / 1000).toFixed(0)}k` : w.balance.toFixed(0)}
-      </Text>
-    ),
-  }));
 
-  const maxBarValue = Math.max(...wallets.map((w) => w.balance), 1);
 
   // Empty state
   if (wallets.length === 0) {
@@ -226,36 +214,7 @@ export default function DashboardScreen() {
         </Animated.View>
       )}
 
-      {/* Bar Chart */}
-      {barData.length > 0 && (
-        <Animated.View entering={FadeInDown.delay(240).duration(400)}>
-          <View style={[styles.chartCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
-            <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>
-              COMPARISON
-            </Text>
-            <View style={styles.barContainer}>
-              <BarChart
-                data={barData}
-                barWidth={28}
-                spacing={20}
-                roundedTop
-                roundedBottom
-                noOfSections={4}
-                maxValue={maxBarValue * 1.15}
-                yAxisThickness={0}
-                xAxisThickness={1}
-                xAxisColor={theme.border}
-                yAxisTextStyle={{ color: theme.textSecondary, fontSize: 10, fontFamily: 'Sora_400Regular' }}
-                xAxisLabelTextStyle={{ color: theme.textSecondary, fontSize: 9, fontFamily: 'Sora_400Regular' }}
-                hideRules
-                barBorderRadius={6}
-                isAnimated
-                animationDuration={600}
-              />
-            </View>
-          </View>
-        </Animated.View>
-      )}
+
 
       {/* Wallet List */}
       <Animated.View entering={FadeInDown.delay(320).duration(400)}>
@@ -397,13 +356,5 @@ const styles = StyleSheet.create({
     fontFamily: 'Sora_600SemiBold',
     fontSize: 13,
   },
-  barContainer: {
-    alignItems: 'center',
-    overflow: 'hidden',
-  },
-  barTopLabel: {
-    fontFamily: 'Sora_500Medium',
-    fontSize: 9,
-    marginBottom: 4,
-  },
+
 });

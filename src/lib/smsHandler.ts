@@ -39,12 +39,12 @@ function handleIncomingSms(event: SmsReceivedEvent): void {
   const wallets = useWalletStore.getState().wallets;
 
   // Find wallets that use SMS tracking and match this sender
-  const matchingWallets = wallets.filter(
-    (w) =>
-      w.trackingMethod === 'sms' &&
-      w.smsSender &&
-      normalizeSender(event.sender) === normalizeSender(w.smsSender)
-  );
+  const matchingWallets = wallets.filter((w) => {
+    if (w.trackingMethod !== 'sms' || !w.smsSender) return false;
+    const senders = w.smsSender.split(',').map((s) => normalizeSender(s.trim()));
+    const incoming = normalizeSender(event.sender);
+    return senders.includes(incoming);
+  });
 
   if (matchingWallets.length === 0) return;
 

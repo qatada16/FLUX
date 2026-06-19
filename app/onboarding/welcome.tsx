@@ -1,5 +1,5 @@
 import React from 'react';
-import { View, Text, StyleSheet, Pressable } from 'react-native';
+import { View, Text, StyleSheet, Pressable, Image } from 'react-native';
 import { LinearGradient } from 'expo-linear-gradient';
 import { router } from 'expo-router';
 import { useTheme } from '../../src/theme';
@@ -11,14 +11,11 @@ export default function WelcomeScreen() {
     <View style={[styles.container, { backgroundColor: theme.background }]}>
       {/* Hero area */}
       <View style={styles.heroArea}>
-        <LinearGradient
-          colors={[theme.accentPrimary, theme.accentSecondary]}
-          start={{ x: 0, y: 0 }}
-          end={{ x: 1, y: 1 }}
-          style={styles.iconCircle}
-        >
-          <Text style={styles.iconText}>F</Text>
-        </LinearGradient>
+        <Image
+          source={require('../../assets/FLUX.png')}
+          style={styles.logoImage}
+          resizeMode="contain"
+        />
 
         <Text style={[styles.title, { color: theme.textPrimary }]}>
           Welcome to Flux
@@ -71,18 +68,10 @@ const styles = StyleSheet.create({
     alignItems: 'center',
     marginBottom: 40,
   },
-  iconCircle: {
-    width: 80,
-    height: 80,
-    borderRadius: 40,
-    alignItems: 'center',
-    justifyContent: 'center',
-    marginBottom: 24,
-  },
-  iconText: {
-    fontFamily: 'Sora_700Bold',
-    fontSize: 36,
-    color: '#0B0E14',
+  logoImage: {
+    width: 150,
+    height: 150,
+    marginBottom: 12,
   },
   title: {
     fontFamily: 'Sora_700Bold',
