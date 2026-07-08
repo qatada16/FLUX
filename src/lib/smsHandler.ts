@@ -1,15 +1,31 @@
-import { addSmsListener, startListening, isAvailable } from '../../modules/sms-listener';
-import type { SmsReceivedEvent } from '../../modules/sms-listener';
+import {
+  addSmsListener,
+  startListening,
+  isAvailable,
+  checkSmsPermission,
+  readMessagesSince,
+} from '../../modules/sms-listener';
+import type { SmsReceivedEvent, SmsInboxMessage } from '../../modules/sms-listener';
 import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
+import { useReconcileStore } from '../store/reconcileStore';
 import { pushBalanceUpdate } from './sync';
 import { getParserForProvider } from './parsers';
 
 let unsubscribe: (() => void) | null = null;
+let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
+let reconciling = false;
+let rerunQueued = false;
 
 /**
- * Start the SMS listener and wire it to the parser + wallet store.
- * Call this once after permissions are granted.
+ * Start the SMS listener.
+ *
+ * IMPORTANT: the live broadcast is NOT used to mutate balances directly.
+ * Android writes every received SMS to the system inbox regardless of internet
+ * connectivity, so the inbox — not the broadcast — is our source of truth. The
+ * broadcast is only a low-latency *poke* that schedules a reconciliation pass
+ * (debounced, with a small delay so Android has finished writing to the inbox).
+ * This gives near-instant updates while guaranteeing exactly-once application.
  */
 export function initSmsListener(): void {
   if (!isAvailable) return;
@@ -17,9 +33,12 @@ export function initSmsListener(): void {
 
   startListening();
 
-  unsubscribe = addSmsListener((event: SmsReceivedEvent) => {
-    handleIncomingSms(event);
+  unsubscribe = addSmsListener((_event: SmsReceivedEvent) => {
+    scheduleReconcile();
   });
+
+  // Catch up on anything missed while the app was closed/killed.
+  void reconcileSms();
 }
 
 /**
@@ -30,20 +49,96 @@ export function teardownSmsListener(): void {
     unsubscribe();
     unsubscribe = null;
   }
+  if (reconcileTimer) {
+    clearTimeout(reconcileTimer);
+    reconcileTimer = null;
+  }
 }
 
 /**
- * Process an incoming SMS against configured wallets.
+ * Debounced trigger used by the live broadcast. Waits briefly so the OS has
+ * persisted the message to the inbox before we read it back.
  */
-function handleIncomingSms(event: SmsReceivedEvent): void {
+export function scheduleReconcile(delayMs = 1500): void {
+  if (reconcileTimer) clearTimeout(reconcileTimer);
+  reconcileTimer = setTimeout(() => {
+    reconcileTimer = null;
+    void reconcileSms();
+  }, delayMs);
+}
+
+/**
+ * Reconcile local balances against the device SMS inbox.
+ *
+ * Reads every inbox message at/after the saved cursor, applies the ones we
+ * haven't seen (deduped by stable inbox row id), then advances the cursor.
+ * Safe to call as often as we like — it is idempotent. Triggered on app
+ * startup, on app foreground, and (debounced) on each live SMS.
+ */
+export async function reconcileSms(): Promise<void> {
+  if (!isAvailable) return;
+
+  // Guard against overlapping passes; if asked again mid-flight, run once more
+  // afterwards so we never drop a trigger.
+  if (reconciling) {
+    rerunQueued = true;
+    return;
+  }
+  reconciling = true;
+  try {
+    const granted = await checkSmsPermission();
+    if (!granted) return;
+
+    const recon = useReconcileStore.getState();
+
+    // First ever run: take a baseline. We deliberately do NOT replay history —
+    // the onboarding balance already accounts for past transactions.
+    if (!recon.initialized) {
+      recon.initCursor(Date.now());
+      return;
+    }
+
+    const messages = await readMessagesSince(recon.smsCursor);
+    if (messages.length === 0) return;
+
+    const processed = new Set(recon.processedSmsIds);
+    const appliedIds: string[] = [];
+    let maxDate = recon.smsCursor;
+
+    for (const msg of messages) {
+      if (msg.date > maxDate) maxDate = msg.date;
+      if (processed.has(msg.id)) continue; // already applied
+      applySmsToWallets(msg);
+      // Mark as handled even if it matched no wallet / wasn't a transaction, so
+      // we don't re-parse it on every pass.
+      appliedIds.push(msg.id);
+      processed.add(msg.id);
+    }
+
+    useReconcileStore.getState().commit(maxDate, appliedIds);
+  } catch (err) {
+    console.error('[SMS] reconcile failed:', err);
+  } finally {
+    reconciling = false;
+    if (rerunQueued) {
+      rerunQueued = false;
+      void reconcileSms();
+    }
+  }
+}
+
+/**
+ * Apply a single inbox message to any wallets that track its sender.
+ */
+function applySmsToWallets(msg: SmsInboxMessage): void {
   const wallets = useWalletStore.getState().wallets;
 
-  // Find wallets that use SMS tracking and match this sender
+  // Find wallets that use SMS tracking and match this sender. smsSender may be
+  // a comma-separated list of shortcodes (a bank can send from several).
   const matchingWallets = wallets.filter((w) => {
     if (w.trackingMethod !== 'sms' || !w.smsSender) return false;
     const senders = w.smsSender.split(',').map((s) => normalizeSender(s.trim()));
-    const incoming = normalizeSender(event.sender);
-    return senders.includes(incoming);
+    return senders.includes(normalizeSender(msg.sender));
   });
 
   if (matchingWallets.length === 0) return;
@@ -52,14 +147,16 @@ function handleIncomingSms(event: SmsReceivedEvent): void {
     const parser = getParserForProvider(wallet.providerKey);
     if (!parser) continue;
 
-    const result = parser.parse(event.body);
+    const result = parser.parse(msg.body);
     if (!result) continue; // Couldn't parse or non-transactional
 
-    // Update balance
+    // Prefer the absolute balance stated in the SMS ("new balance Rs.X") —
+    // it self-corrects any drift. Fall back to applying the delta.
     const newBalance =
-      result.direction === 'credit'
+      result.newBalance ??
+      (result.direction === 'credit'
         ? wallet.balance + result.amount
-        : wallet.balance - result.amount;
+        : wallet.balance - result.amount);
 
     console.log(
       `[SMS] ${wallet.displayName}: ${result.direction} Rs.${result.amount} → new balance Rs.${newBalance}`
@@ -67,10 +164,11 @@ function handleIncomingSms(event: SmsReceivedEvent): void {
 
     useWalletStore.getState().updateBalance(wallet.id, newBalance);
 
-    // Sync to cloud in background
+    // Sync to cloud in background. If offline this fails silently; the local
+    // store is already updated and the cloud catches up on the next push.
     const user = useAuthStore.getState().user;
     if (user) {
-      pushBalanceUpdate(wallet.id, newBalance);
+      void pushBalanceUpdate(wallet.id, newBalance);
     }
   }
 }

@@ -59,6 +59,50 @@ class SmsListenerModule : Module() {
       false
     }
 
+    // Read messages from the device SMS inbox newer than `since` (epoch ms).
+    // This is the backbone of reconciliation: even if the live broadcast was
+    // missed (app killed, phone off, internet off), the SMS still landed in
+    // the system inbox and we can recover it here. Returns oldest-first so the
+    // caller can apply deltas in chronological order. Capped to avoid huge reads.
+    AsyncFunction("readMessagesSince") { since: Double ->
+      val context = appContext.reactContext ?: return@AsyncFunction emptyList<Map<String, Any>>()
+      val hasRead = ContextCompat.checkSelfPermission(
+        context, Manifest.permission.READ_SMS
+      ) == PackageManager.PERMISSION_GRANTED
+      if (!hasRead) return@AsyncFunction emptyList<Map<String, Any>>()
+
+      val sinceMs = since.toLong()
+      val results = mutableListOf<Map<String, Any>>()
+      val projection = arrayOf(
+        Telephony.Sms._ID,
+        Telephony.Sms.ADDRESS,
+        Telephony.Sms.BODY,
+        Telephony.Sms.DATE
+      )
+      val selection = "${Telephony.Sms.DATE} >= ?"
+      val selectionArgs = arrayOf(sinceMs.toString())
+      // SQLite-backed provider honours a trailing LIMIT in the sort order arg.
+      val sortOrder = "${Telephony.Sms.DATE} ASC LIMIT $MAX_RECONCILE_ROWS"
+
+      context.contentResolver.query(
+        Telephony.Sms.Inbox.CONTENT_URI, projection, selection, selectionArgs, sortOrder
+      )?.use { cursor ->
+        val idIdx = cursor.getColumnIndexOrThrow(Telephony.Sms._ID)
+        val addrIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.ADDRESS)
+        val bodyIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.BODY)
+        val dateIdx = cursor.getColumnIndexOrThrow(Telephony.Sms.DATE)
+        while (cursor.moveToNext()) {
+          results.add(mapOf(
+            "id" to cursor.getLong(idIdx).toString(),
+            "sender" to (cursor.getString(addrIdx) ?: "unknown"),
+            "body" to (cursor.getString(bodyIdx) ?: ""),
+            "date" to cursor.getLong(dateIdx).toDouble()
+          ))
+        }
+      }
+      results
+    }
+
     // Register the broadcast receiver
     Function("startListening") {
       val context = appContext.reactContext
@@ -108,6 +152,8 @@ class SmsListenerModule : Module() {
 
   companion object {
     private const val SMS_PERMISSION_REQUEST_CODE = 1001
+    // Upper bound on rows returned by a single reconciliation read.
+    private const val MAX_RECONCILE_ROWS = 200
   }
 }
 

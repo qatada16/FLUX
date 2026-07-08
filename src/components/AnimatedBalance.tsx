@@ -1,16 +1,9 @@
 import React, { useEffect } from 'react';
 import { Text, TextStyle, StyleProp } from 'react-native';
-import Animated, {
-  useSharedValue,
-  useAnimatedProps,
-  withTiming,
-  Easing,
-} from 'react-native-reanimated';
 
-// Animated count-up effect for balance numbers.
-// Uses Reanimated to smoothly animate from 0 (or previous value) to the target.
-
-const AnimatedText = Animated.createAnimatedComponent(Text);
+// Animated count-up effect for balance numbers, driven by a simple
+// requestAnimationFrame loop (animating Text content via Reanimated shared
+// values isn't supported, so JS-side interpolation is the reliable approach).
 
 interface AnimatedBalanceProps {
   value: number;
@@ -20,17 +13,6 @@ interface AnimatedBalanceProps {
 }
 
 export function AnimatedBalance({ value, prefix = 'Rs. ', style, duration = 800 }: AnimatedBalanceProps) {
-  const animatedValue = useSharedValue(0);
-
-  useEffect(() => {
-    animatedValue.value = withTiming(value, {
-      duration,
-      easing: Easing.out(Easing.cubic),
-    });
-  }, [value]);
-
-  // Since animatedProps on Text is tricky in RN, we use a simpler approach:
-  // re-render based on a state that follows the animation.
   const [displayValue, setDisplayValue] = React.useState(value);
 
   useEffect(() => {

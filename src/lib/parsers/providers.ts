@@ -16,6 +16,17 @@ const AMOUNT_NEAR_KEYWORD = new RegExp(
   'i'
 );
 
+// "Your new balance is Rs.X" / "Avl Bal: PKR X" / "Current balance Rs.X" —
+// the post-transaction balance that most Pakistani wallet/bank SMS append.
+// Captured separately so (a) it can be applied as an absolute, self-correcting
+// balance and (b) it never gets mistaken for the transaction amount.
+// The amount may be written "Rs.1,500" (currency first) or "1,500 PKR"
+// (currency after) — capture group 1 or 2 respectively.
+const BALANCE_CLAUSE = new RegExp(
+  `(?:new|available|avl\\.?|remaining|current|updated|closing|a\\/c)\\s*(?:account\\s+)?bal(?:ance)?\\s*(?:is|:|=)?\\s*(?:${CURRENCY}\\s*${NUM}|${NUM}\\s*${CURRENCY})`,
+  'i'
+);
+
 function toNumber(raw: string | undefined): number | null {
   if (!raw) return null;
   const amount = parseFloat(raw.replace(/,/g, ''));
@@ -38,9 +49,6 @@ function extractAmount(text: string): number | null {
 // Primary logic: look for "sent" → debit, "received" → credit, plus
 // other common banking keywords.
 function genericParse(body: string): ParseResult | null {
-  const amount = extractAmount(body);
-  if (!amount) return null;
-
   // Skip non-transactional messages. NOTE: we deliberately do NOT skip on
   // "balance" alone — real transaction alerts almost always include an
   // "Available Balance is Rs.X" line. Pure balance-inquiry replies carry no
@@ -51,23 +59,101 @@ function genericParse(body: string): ParseResult | null {
   ];
   if (skipPatterns.some((p) => p.test(body))) return null;
 
-  // Credit indicators (money coming in)
-  const creditPatterns = [
-    /\breceived\b/i, /\bcredited\b/i, /\bcredit\b/i,
-    /\bdeposit(?:ed)?\b/i, /\btransfer(?:red)?\s+to\s+your\b/i,
-    /\bincoming\b/i, /\bcash\s*in\b/i, /\badded\b/i,
-    /\brefund(?:ed)?\b/i, /\binward\b/i,
-  ];
+  // Pull the stated post-transaction balance out FIRST, then remove that
+  // clause so the transaction-amount search below can never mistake the
+  // balance figure for the amount (e.g. "Avl Bal Rs.9,000: Rs.500 debited").
+  const balanceMatch = body.match(BALANCE_CLAUSE);
+  // Unlike the txn amount, a stated balance of 0 is valid ("Avl Bal Rs.0").
+  const balanceRaw = balanceMatch ? (balanceMatch[1] ?? balanceMatch[2]) : undefined;
+  const parsedBalance = balanceRaw
+    ? parseFloat(balanceRaw.replace(/,/g, ''))
+    : NaN;
+  const newBalance =
+    !isNaN(parsedBalance) && parsedBalance >= 0 ? parsedBalance : undefined;
+  const searchBody = balanceMatch ? body.replace(balanceMatch[0], ' ') : body;
 
-  // Debit indicators (money going out)
-  const debitPatterns = [
-    /\bsent\b/i, /\bdebited\b/i, /\bdebit\b/i,
-    /\bwithdra\w*/i, /\bpaid\b/i, /\bpayment\b/i,
-    /\btransfer(?:red)?\s+from\b/i, /\bcash\s*out\b/i,
-    /\bpurchase\b/i, /\bspent\b/i, /\bdebit\s*card\b/i,
-    /\bpos\b/i, /\batm\b/i, /\bbill\s*payment\b/i, /\boutgoing\b/i,
-    /\bcharged\b/i,
-  ];
+  const amount = extractAmount(searchBody);
+  if (!amount) return null;
+
+ // Credit indicators (money coming in)
+const creditPatterns = [
+  /\breceived\b/i,
+  /\bcredited\b/i,
+  /\bcredit\b/i,
+  /\bdeposit(?:ed)?\b/i,
+  /\btransfer(?:red)?\s+to\s+your\b/i,
+  /\bincoming\b/i,
+  /\bcash\s*in\b/i,
+  /\badded\b/i,
+  /\brefund(?:ed)?\b/i,
+  /\binward\b/i,
+  /\bdeposit\s+received\b/i,
+  /\bfunds?\s+received\b/i,
+  /\bmoney\s+received\b/i,
+  /\bpayment\s+received\b/i,
+  /\bcollection\b/i,
+  /\bsalary\b/i,
+  /\bpayroll\b/i,
+  /\bbonus\b/i,
+  /\binterest\s+credited\b/i,
+  /\breward(?:s)?\b/i,
+  /\bcashback\b/i,
+  /\breimbursement\b/i,
+  /\btop[\s-]?up\b/i,
+  /\bload(?:ed)?\b/i,
+  /\bremittance\b/i,
+  /\bupi\s+received\b/i,
+  /\bimps\s+credit\b/i,
+  /\bneft\s+credit\b/i,
+  /\brtgs\s+credit\b/i,
+  /\bcredited\s+to\b/i,
+  /\bdeposit\s+successful\b/i,
+];
+
+// Debit indicators (money going out)
+const debitPatterns = [
+  /\bsent\b/i,
+  /\bdebited\b/i,
+  /\bdebit\b/i,
+  /\bwithdra\w*/i,
+  /\bpaid\b/i,
+  /\bpayment\b/i,
+  /\btransfer(?:red)?\s+from\b/i,
+  /\bcash\s*out\b/i,
+  /\bpurchase\b/i,
+  /\bspent\b/i,
+  /\bdebit\s*card\b/i,
+  /\bpos\b/i,
+  /\batm\b/i,
+  /\bbill\s*payment\b/i,
+  /\boutgoing\b/i,
+  /\bcharged\b/i,
+  /\bpurchased\b/i,
+  /\bpayment\s+made\b/i,
+  /\bfunds?\s+transferred\b/i,
+  /\bmoney\s+sent\b/i,
+  /\bupi\s+payment\b/i,
+  /\bupi\s+transfer\b/i,
+  /\bimps\s+debit\b/i,
+  /\bneft\s+debit\b/i,
+  /\brtgs\s+debit\b/i,
+  /\bwithdrawal\b/i,
+  /\bfee\b/i,
+  /\bservice\s+charge\b/i,
+  /\bmaintenance\s+fee\b/i,
+  /\bcommission\b/i,
+  /\bsubscription\b/i,
+  /\bauto[\s-]?debit\b/i,
+  /\bstanding\s+instruction\b/i,
+  /\bemi\b/i,
+  /\bloan\s+payment\b/i,
+  /\bmerchant\b/i,
+  /\bcheckout\b/i,
+  /\bpurchase\s+at\b/i,
+  /\bcard\s+payment\b/i,
+  /\bupi\s+collect\b/i,
+  /\btransfer\s+successful\b/i,
+];
 
   // Find earliest matching position for each direction
   const findEarliestMatch = (patterns: RegExp[]): number => {
@@ -90,10 +176,10 @@ function genericParse(body: string): ParseResult | null {
 
   // If both match, use whichever keyword appeared first in the message
   if (isCredit && isDebit) {
-    return { amount, direction: creditPos < debitPos ? 'credit' : 'debit' };
+    return { amount, direction: creditPos < debitPos ? 'credit' : 'debit', newBalance };
   }
 
-  return { amount, direction: isCredit ? 'credit' : 'debit' };
+  return { amount, direction: isCredit ? 'credit' : 'debit', newBalance };
 }
 
 // Provider-specific parsers. Each can override the generic parser

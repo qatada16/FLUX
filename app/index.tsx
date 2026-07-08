@@ -18,8 +18,14 @@ export default function IndexScreen() {
       const user = useAuthStore.getState().user;
 
       if (user) {
-        // Logged in — try to pull fresh data from cloud
-        await pullWalletsFromCloud(user.id);
+        // Logged in — try to pull fresh data from cloud, but never let a slow
+        // or dead network hold the app hostage at boot: local data is already
+        // usable, and the dashboard can sync later (pull-to-refresh /
+        // foreground flush). 4s cap keeps cold starts snappy offline.
+        await Promise.race([
+          pullWalletsFromCloud(user.id),
+          new Promise((resolve) => setTimeout(resolve, 4000)),
+        ]);
         const hasWallets = useWalletStore.getState().hasCompletedOnboarding;
         if (hasWallets) {
           router.replace('/dashboard');

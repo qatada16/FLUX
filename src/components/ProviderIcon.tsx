@@ -6,6 +6,7 @@ const logoImages: Record<string, any> = {
   easypaisa: require('../../assets/Easypaisa-logo.jpg'),
   sadapay: require('../../assets/Sadapay-Logo.jpg'),
   faysal: require('../../assets/faysal-bank-logo.jpg'),
+  meezan: require('../../assets/meezan-bank-logo.png'),
 };
 
 const iconColors: Record<string, string> = {

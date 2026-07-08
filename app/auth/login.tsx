@@ -16,7 +16,7 @@ import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { useWalletStore } from '../../src/store/walletStore';
-import { pullWalletsFromCloud, pushAllWalletsToCloud } from '../../src/lib/sync';
+import { pullWalletsFromCloud, flushPendingSync } from '../../src/lib/sync';
 
 export default function LoginScreen() {
   const { theme } = useTheme();
@@ -44,12 +44,13 @@ export default function LoginScreen() {
     if (user) {
       const result = await pullWalletsFromCloud(user.id);
       if (result === 'found') {
-        // Cloud had wallets — go to dashboard
+        // Cloud had wallets — push any pending local changes, then go.
+        void flushPendingSync(user.id);
         router.replace('/dashboard');
       } else if (hasCompletedOnboarding) {
         // Local wallets exist but not in cloud (empty or fetch error) —
-        // push them up so the cloud is seeded, then continue.
-        await pushAllWalletsToCloud(user.id);
+        // seed the cloud with them, then continue.
+        await flushPendingSync(user.id, { force: true });
         router.replace('/dashboard');
       } else {
         // No wallets anywhere — run onboarding

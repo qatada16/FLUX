@@ -1,6 +1,6 @@
 import React, { useState, useCallback, useEffect, useRef } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform } from 'react-native';
-import Animated, { FadeInDown, FadeInUp } from 'react-native-reanimated';
+import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PieChart } from 'react-native-gifted-charts';
 import { router } from 'expo-router';
@@ -8,13 +8,12 @@ import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
 import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
-import { pullWalletsFromCloud } from '../src/lib/sync';
+import { pullWalletsFromCloud, flushPendingSync } from '../src/lib/sync';
 import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
 import { EmptyState } from '../src/components/EmptyState';
 import { ErrorBanner } from '../src/components/ErrorBanner';
 import { showBatteryOptimizationPrompt } from '../src/lib/battery';
-import { useSettingsStore } from '../src/store/settingsStore';
 import { getProviderColor } from '../src/constants/providers';
 
 export default function DashboardScreen() {
@@ -57,6 +56,8 @@ export default function DashboardScreen() {
     setSyncError(null);
     const user = useAuthStore.getState().user;
     if (user) {
+      // Push local changes first so the pull can't clobber newer local data.
+      await flushPendingSync(user.id);
       const result = await pullWalletsFromCloud(user.id);
       if (result === 'error') {
         setSyncError('Could not sync with cloud. Pull down to retry.');

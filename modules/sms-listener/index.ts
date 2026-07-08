@@ -8,6 +8,14 @@ export interface SmsReceivedEvent {
   timestamp: number;
 }
 
+// A message read back from the device SMS inbox during reconciliation.
+export interface SmsInboxMessage {
+  id: string; // stable inbox row id — used for idempotent dedup
+  sender: string;
+  body: string;
+  date: number; // epoch ms (received time)
+}
+
 type SmsEventsMap = {
   onSmsReceived: (event: SmsReceivedEvent) => void;
 };
@@ -15,6 +23,7 @@ type SmsEventsMap = {
 interface SmsListenerNativeModule {
   checkPermission(): Promise<boolean>;
   requestPermission(): Promise<boolean>;
+  readMessagesSince(since: number): Promise<SmsInboxMessage[]>;
   startListening(): void;
   stopListening(): void;
   addListener<K extends keyof SmsEventsMap>(eventName: K, listener: SmsEventsMap[K]): EventSubscription;
@@ -40,6 +49,16 @@ export async function checkSmsPermission(): Promise<boolean> {
 export async function requestSmsPermission(): Promise<boolean> {
   if (!SmsListenerModule) return false;
   return await SmsListenerModule.requestPermission();
+}
+
+/**
+ * Read SMS inbox messages received at or after `since` (epoch ms), oldest
+ * first. Used by reconciliation to recover messages the live listener missed.
+ * Returns an empty array if the module/permission is unavailable.
+ */
+export async function readMessagesSince(since: number): Promise<SmsInboxMessage[]> {
+  if (!SmsListenerModule) return [];
+  return await SmsListenerModule.readMessagesSince(since);
 }
 
 /**

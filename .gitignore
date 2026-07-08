@@ -44,3 +44,10 @@ yarn-error.*
 # build artifacts
 *.apk
 *.aab
+
+# IDE
+.idea/
+
+# Gradle caches inside local expo modules
+modules/**/android/.gradle/
+modules/**/android/build/

@@ -1,6 +1,25 @@
 import { create } from 'zustand';
-import { supabase } from '../lib/supabase';
+import { supabase, isSupabaseConfigured } from '../lib/supabase';
 import type { Session, User } from '@supabase/supabase-js';
+
+// Translate raw fetch/DNS failures into something a human can act on. The
+// default messages leak Java exceptions ("UnknownHostException...") that read
+// like crashes when the real problem is just connectivity.
+function friendlyAuthError(raw: string | undefined | null): string | null {
+  if (!raw) return null;
+  const msg = raw.toLowerCase();
+  if (
+    msg.includes('fetch failed') ||
+    msg.includes('network request failed') ||
+    msg.includes('unknownhost') ||
+    msg.includes('unable to resolve host') ||
+    msg.includes('timeout') ||
+    msg.includes('failed to fetch')
+  ) {
+    return 'No internet connection. Check your network and try again.';
+  }
+  return raw;
+}
 
 interface AuthState {
   session: Session | null;
@@ -39,29 +58,43 @@ export const useAuthStore = create<AuthState>((set, get) => ({
   },
 
   signUp: async (email, password) => {
+    if (!isSupabaseConfigured) {
+      return { error: 'Cloud sync is not configured in this build.' };
+    }
     set({ loading: true });
-    const { data, error } = await supabase.auth.signUp({ email, password });
-    set({
-      loading: false,
-      session: data.session,
-      user: data.user,
-    });
-    return { error: error?.message ?? null };
+    try {
+      const { data, error } = await supabase.auth.signUp({ email, password });
+      set({ session: data.session, user: data.user });
+      return { error: friendlyAuthError(error?.message) };
+    } catch (err) {
+      return { error: friendlyAuthError((err as Error)?.message) ?? 'Sign up failed.' };
+    } finally {
+      set({ loading: false });
+    }
   },
 
   signIn: async (email, password) => {
+    if (!isSupabaseConfigured) {
+      return { error: 'Cloud sync is not configured in this build.' };
+    }
     set({ loading: true });
-    const { data, error } = await supabase.auth.signInWithPassword({ email, password });
-    set({
-      loading: false,
-      session: data.session,
-      user: data.user,
-    });
-    return { error: error?.message ?? null };
+    try {
+      const { data, error } = await supabase.auth.signInWithPassword({ email, password });
+      set({ session: data.session, user: data.user });
+      return { error: friendlyAuthError(error?.message) };
+    } catch (err) {
+      return { error: friendlyAuthError((err as Error)?.message) ?? 'Sign in failed.' };
+    } finally {
+      set({ loading: false });
+    }
   },
 
   signOut: async () => {
-    await supabase.auth.signOut();
+    try {
+      await supabase.auth.signOut();
+    } catch {
+      // Even if the network call fails, drop the local session.
+    }
     set({ session: null, user: null });
   },
 }));
