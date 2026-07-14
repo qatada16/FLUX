@@ -8,9 +8,10 @@ import { useWalletStore } from '../../src/store/walletStore';
 
 export default function SelectWalletsScreen() {
   const { theme } = useTheme();
-  const existingProviderKeys = useWalletStore((s) =>
-    new Set(s.wallets.map((w) => w.providerKey))
-  );
+  const wallets = useWalletStore((s) => s.wallets);
+  const existingProviderKeys = React.useMemo(() => {
+    return new Set(wallets.map((w) => w.providerKey));
+  }, [wallets]);
   const [selected, setSelected] = useState<Set<string>>(new Set());
 
   const toggle = (key: string) => {
@@ -22,14 +23,14 @@ export default function SelectWalletsScreen() {
     });
   };
 
-  const wallets = providerTemplates.filter((p) => p.type === 'wallet');
+  const walletsList = providerTemplates.filter((p) => p.type === 'wallet');
   const banks = providerTemplates.filter((p) => p.type === 'bank');
 
   const canContinue = selected.size > 0;
 
   const handleContinue = () => {
     // Pass selected provider keys to the config screen
-    const keys = Array.from(selected).join(',');
+    const keys = [...selected].join(',');
     router.push({ pathname: '/onboarding/configure-wallets', params: { keys } });
   };
 
@@ -117,7 +118,7 @@ export default function SelectWalletsScreen() {
         contentContainerStyle={styles.scrollContent}
         showsVerticalScrollIndicator={false}
       >
-        {renderSection('Mobile Wallets', wallets)}
+        {renderSection('Mobile Wallets', walletsList)}
         {renderSection('Banks', banks)}
       </ScrollView>
 
