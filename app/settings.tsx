@@ -1,10 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Alert, Platform } from 'react-native';
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Platform } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
+import { showAppModal } from '../src/components/AppModal';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useWalletStore } from '../src/store/walletStore';
+import { useTransactionStore } from '../src/store/transactionStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
 import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
@@ -32,6 +34,7 @@ export default function SettingsScreen() {
   const themeMode = useSettingsStore((s) => s.themeMode);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const resetOnboarding = useWalletStore((s) => s.resetOnboarding);
+  const clearTransactions = useTransactionStore((s) => s.clear);
   const wallets = useWalletStore((s) => s.wallets);
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
@@ -43,16 +46,16 @@ export default function SettingsScreen() {
     }
     const ok = await pushAllWalletsToCloud(user.id);
     if (ok) {
-      Alert.alert('Synced!', 'All wallets backed up to cloud.');
+      showAppModal({ title: 'Synced!', message: 'All wallets backed up to cloud.' });
     } else {
-      Alert.alert('Sync failed', 'Could not sync to cloud. Check your connection.');
+      showAppModal({ title: 'Sync failed', message: 'Could not sync to cloud. Check your connection.' });
     }
   };
 
   const handleSignOut = async () => {
     await signOut();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
-    Alert.alert('Signed out', 'You are now using Flux offline.');
+    showAppModal({ title: 'Signed out', message: 'You are now using Flux offline.' });
   };
 
   return (
@@ -125,6 +128,16 @@ export default function SettingsScreen() {
           <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Active Wallets</Text>
           <Text style={[styles.rowValue, { color: theme.textSecondary }]}>{wallets.length}</Text>
         </View>
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/transactions');
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
+          <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Transaction History</Text>
+          <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>→</Text>
+        </Pressable>
       </View>
 
       {/* Permissions section (placeholder for Phase 5-6) */}
@@ -133,11 +146,11 @@ export default function SettingsScreen() {
         <Pressable
           onPress={async () => {
             if (!smsAvailable) {
-              Alert.alert('Not available', 'SMS listening is only available on Android.');
+              showAppModal({ title: 'Not available', message: 'SMS listening is only available on Android.' });
               return;
             }
             if (smsGranted) {
-              Alert.alert('Already granted', 'SMS permission is already enabled.');
+              showAppModal({ title: 'Already granted', message: 'SMS permission is already enabled.' });
               return;
             }
             await requestSmsPermission();
@@ -147,7 +160,7 @@ export default function SettingsScreen() {
               setSmsGranted(granted);
               if (granted) {
                 initSmsListener();
-                Alert.alert('SMS Access Granted', 'Flux will now read incoming SMS to update balances.');
+                showAppModal({ title: 'SMS Access Granted', message: 'Flux will now read incoming SMS to update balances.' });
               }
             }, 1000);
           }}
@@ -164,20 +177,22 @@ export default function SettingsScreen() {
         <Pressable
           onPress={() => {
             if (!notifAvailable) {
-              Alert.alert('Not available', 'Notification listening is only available on Android.');
+              showAppModal({ title: 'Not available', message: 'Notification listening is only available on Android.' });
               return;
             }
             if (notifGranted) {
-              Alert.alert('Already granted', 'Notification access is already enabled.');
+              showAppModal({ title: 'Already granted', message: 'Notification access is already enabled.' });
               return;
             }
-            Alert.alert(
-              'Enable Notification Access',
-              'Android requires you to manually enable notification access.\n\nTap OK to open Settings, then find "Flux" in the list and toggle it ON.',
-              [
+            showAppModal({
+              title: 'Enable Notification Access',
+              message:
+                'Android requires you to manually enable notification access.\n\nTap "Open Settings", then find "Flux" in the list and toggle it ON.',
+              buttons: [
                 { text: 'Cancel', style: 'cancel' },
                 {
                   text: 'Open Settings',
+                  style: 'default',
                   onPress: () => {
                     openNotificationSettings();
                     // Re-check when user comes back (they'll tap back)
@@ -191,8 +206,8 @@ export default function SettingsScreen() {
                     }, 3000);
                   },
                 },
-              ]
-            );
+              ],
+            });
           }}
           style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
@@ -244,18 +259,23 @@ export default function SettingsScreen() {
         <Text style={[styles.sectionTitle, { color: theme.danger }]}>DANGER ZONE</Text>
         <Pressable
           onPress={() => {
-            Alert.alert('Reset All Data', 'This will remove all wallets and settings. Are you sure?', [
-              { text: 'Cancel', style: 'cancel' },
-              {
-                text: 'Reset',
-                style: 'destructive',
-                onPress: () => {
-                  Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
-                  resetOnboarding();
-                  router.replace('/');
+            showAppModal({
+              title: 'Reset All Data',
+              message: 'This will remove all wallets and settings. Are you sure?',
+              buttons: [
+                { text: 'Cancel', style: 'cancel' },
+                {
+                  text: 'Reset',
+                  style: 'destructive',
+                  onPress: () => {
+                    Haptics.notificationAsync(Haptics.NotificationFeedbackType.Warning);
+                    resetOnboarding();
+                    clearTransactions();
+                    router.replace('/');
+                  },
                 },
-              },
-            ]);
+              ],
+            });
           }}
           style={[styles.row, { backgroundColor: theme.danger + '12', borderColor: theme.danger + '30' }]}
         >

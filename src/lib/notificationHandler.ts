@@ -7,6 +7,7 @@ import type { NotificationReceivedEvent } from '../../modules/notification-liste
 import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
 import { pushBalanceUpdate } from './sync';
+import { recordTransaction } from './transactionSync';
 import { getParserForProvider } from './parsers';
 
 let unsubscribe: (() => void) | null = null;
@@ -109,10 +110,20 @@ function handleIncomingNotification(event: NotificationReceivedEvent): void {
 
     useWalletStore.getState().updateBalance(wallet.id, newBalance);
 
+    // Log the transaction to history (offline-first; syncs when online).
+    recordTransaction({
+      walletId: wallet.id,
+      walletName: wallet.displayName,
+      amount: result.amount,
+      direction: result.direction,
+      balanceAfter: newBalance,
+      source: 'notification',
+    });
+
     // Sync to cloud in background
     const user = useAuthStore.getState().user;
     if (user) {
-      pushBalanceUpdate(wallet.id, newBalance);
+      void pushBalanceUpdate(wallet.id, newBalance);
     }
   }
 }

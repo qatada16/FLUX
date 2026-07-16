@@ -8,10 +8,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   Image,
 } from 'react-native';
 import { router } from 'expo-router';
+import { showAppModal } from '../../src/components/AppModal';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
@@ -27,29 +27,29 @@ export default function SignUpScreen() {
 
   const handleSignUp = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Missing fields', 'Please enter both email and password.');
+      showAppModal({ title: 'Missing fields', message: 'Please enter both email and password.' });
       return;
     }
     if (password !== confirm) {
-      Alert.alert('Password mismatch', 'Passwords do not match.');
+      showAppModal({ title: 'Password mismatch', message: 'Passwords do not match.' });
       return;
     }
     if (password.length < 6) {
-      Alert.alert('Weak password', 'Password must be at least 6 characters.');
+      showAppModal({ title: 'Weak password', message: 'Password must be at least 6 characters.' });
       return;
     }
 
     const { error } = await signUp(email.trim(), password.trim());
     if (error) {
-      Alert.alert('Sign up failed', error);
+      showAppModal({ title: 'Sign up failed', message: error });
       return;
     }
 
-    Alert.alert(
-      'Account created!',
-      'Check your email to confirm your account, then sign in.',
-      [{ text: 'OK', onPress: () => router.replace('/auth/login') }]
-    );
+    showAppModal({
+      title: 'Account created!',
+      message: 'Check your email to confirm your account, then sign in.',
+      buttons: [{ text: 'OK', style: 'default', onPress: () => router.replace('/auth/login') }],
+    });
   };
 
   return (

@@ -10,6 +10,7 @@ import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
 import { useReconcileStore } from '../store/reconcileStore';
 import { pushBalanceUpdate } from './sync';
+import { recordTransaction } from './transactionSync';
 import { getParserForProvider } from './parsers';
 
 let unsubscribe: (() => void) | null = null;
@@ -163,6 +164,16 @@ function applySmsToWallets(msg: SmsInboxMessage): void {
     );
 
     useWalletStore.getState().updateBalance(wallet.id, newBalance);
+
+    // Log the transaction to history (offline-first; syncs when online).
+    recordTransaction({
+      walletId: wallet.id,
+      walletName: wallet.displayName,
+      amount: result.amount,
+      direction: result.direction,
+      balanceAfter: newBalance,
+      source: 'sms',
+    });
 
     // Sync to cloud in background. If offline this fails silently; the local
     // store is already updated and the cloud catches up on the next push.

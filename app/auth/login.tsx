@@ -8,10 +8,10 @@ import {
   KeyboardAvoidingView,
   Platform,
   ActivityIndicator,
-  Alert,
   Image,
 } from 'react-native';
 import { router } from 'expo-router';
+import { showAppModal } from '../../src/components/AppModal';
 import { LinearGradient } from 'expo-linear-gradient';
 import { useTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
@@ -29,13 +29,13 @@ export default function LoginScreen() {
 
   const handleLogin = async () => {
     if (!email.trim() || !password.trim()) {
-      Alert.alert('Missing fields', 'Please enter both email and password.');
+      showAppModal({ title: 'Missing fields', message: 'Please enter both email and password.' });
       return;
     }
 
     const { error } = await signIn(email.trim(), password.trim());
     if (error) {
-      Alert.alert('Login failed', error);
+      showAppModal({ title: 'Login failed', message: error });
       return;
     }
 

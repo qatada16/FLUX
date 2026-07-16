@@ -13,7 +13,7 @@ import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
 import { EmptyState } from '../src/components/EmptyState';
 import { ErrorBanner } from '../src/components/ErrorBanner';
-import { showBatteryOptimizationPrompt } from '../src/lib/battery';
+import { maybeShowBatteryPrompt } from '../src/lib/battery';
 import { getProviderColor } from '../src/constants/providers';
 
 export default function DashboardScreen() {
@@ -45,9 +45,11 @@ export default function DashboardScreen() {
       (w) => w.trackingMethod === 'sms' || w.trackingMethod === 'notification'
     );
     if (hasAutoTracking) {
+      // Guard against firing twice within one session; maybeShowBatteryPrompt
+      // additionally self-gates by persisted count + current permission state.
       batteryPromptShown.current = true;
-      // Delay so the dashboard has time to render first
-      setTimeout(showBatteryOptimizationPrompt, 2000);
+      const t = setTimeout(() => void maybeShowBatteryPrompt(), 2000);
+      return () => clearTimeout(t);
     }
   }, [wallets]);
 

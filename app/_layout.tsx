@@ -5,6 +5,7 @@ import { AppState, Platform, View } from 'react-native';
 import { useFonts, Sora_400Regular, Sora_500Medium, Sora_600SemiBold, Sora_700Bold } from '@expo-google-fonts/sora';
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeContext, darkTheme, lightTheme } from '../src/theme';
+import { AppModalHost } from '../src/components/AppModal';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useAuthStore } from '../src/store/authStore';
 import { flushPendingSync } from '../src/lib/sync';
@@ -75,6 +76,7 @@ export default function RootLayout() {
             animation: 'slide_from_right',
           }}
         />
+        <AppModalHost />
       </View>
     </ThemeContext.Provider>
   );

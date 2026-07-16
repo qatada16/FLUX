@@ -1,5 +1,6 @@
 import { supabase, isSupabaseConfigured } from './supabase';
 import { useWalletStore } from '../store/walletStore';
+import { flushPendingTransactions } from './transactionSync';
 import type { Wallet } from '../types/wallet';
 
 // Result of a cloud pull: distinguishes a real failure ('error') from a
@@ -203,6 +204,9 @@ export async function flushPendingSync(
     if (dirty || opts.force) {
       await pushAllWalletsToCloud(userId);
     }
+
+    // Push any transaction-history entries recorded while offline.
+    await flushPendingTransactions(userId);
   } catch (err) {
     console.error('Flush pending sync exception:', err);
   }

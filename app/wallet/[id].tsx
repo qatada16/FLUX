@@ -6,10 +6,10 @@ import {
   Pressable,
   TextInput,
   ScrollView,
-  Alert,
   KeyboardAvoidingView,
   Platform,
 } from 'react-native';
+import { showAppModal } from '../../src/components/AppModal';
 import { useLocalSearchParams, router } from 'expo-router';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import * as Haptics from 'expo-haptics';
@@ -17,6 +17,7 @@ import { useTheme } from '../../src/theme';
 import { useWalletStore } from '../../src/store/walletStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { pushBalanceUpdate, deleteWalletFromCloud, pushAllWalletsToCloud } from '../../src/lib/sync';
+import { recordTransaction } from '../../src/lib/transactionSync';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import type { TrackingMethod } from '../../src/types/wallet';
 
@@ -80,7 +81,17 @@ export default function WalletDetailScreen() {
     const newBalance = parseFloat(editBalance) || 0;
 
     if (newBalance !== wallet.balance) {
+      const delta = newBalance - wallet.balance;
       updateBalance(wallet.id, newBalance);
+      // Record the manual adjustment in history too.
+      recordTransaction({
+        walletId: wallet.id,
+        walletName: wallet.displayName,
+        amount: Math.abs(delta),
+        direction: delta >= 0 ? 'credit' : 'debit',
+        balanceAfter: newBalance,
+        source: 'manual',
+      });
     }
 
     if (editMethod && editMethod !== wallet.trackingMethod) {
@@ -111,10 +122,10 @@ export default function WalletDetailScreen() {
   };
 
   const confirmDelete = () => {
-    Alert.alert(
-      'Remove Wallet',
-      `Are you sure you want to remove ${wallet.displayName}? This cannot be undone.`,
-      [
+    showAppModal({
+      title: 'Remove Wallet',
+      message: `Are you sure you want to remove ${wallet.displayName}? This cannot be undone.`,
+      buttons: [
         { text: 'Cancel', style: 'cancel' },
         {
           text: 'Remove',
@@ -127,8 +138,8 @@ export default function WalletDetailScreen() {
             router.back();
           },
         },
-      ]
-    );
+      ],
+    });
   };
 
   const trackingMethods: { key: TrackingMethod; label: string }[] = [
