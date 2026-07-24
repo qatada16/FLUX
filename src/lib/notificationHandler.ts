@@ -6,16 +6,14 @@ import {
 import type { NotificationReceivedEvent } from '../../modules/notification-listener';
 import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
+import { useAiQueueStore } from '../store/aiQueueStore';
 import { pushBalanceUpdate } from './sync';
 import { recordTransaction } from './transactionSync';
 import { getParserForProvider } from './parsers';
+import { parseMessageWithAi } from './aiParser';
 
 let unsubscribe: (() => void) | null = null;
 
-// Android apps often re-post (update) the same notification — progress
-// updates, "silent" refreshes, or the summary re-appearing after unlock.
-// Applying the same transaction twice would corrupt the balance, so we
-// remember recently-seen content and skip repeats inside a short window.
 const DEDUP_WINDOW_MS = 5 * 60 * 1000;
 const MAX_DEDUP_ENTRIES = 100;
 const recentNotifications = new Map<string, number>();
@@ -30,7 +28,6 @@ function isDuplicateNotification(event: NotificationReceivedEvent): boolean {
   }
 
   recentNotifications.set(key, now);
-  // Prune: drop expired entries, then oldest if still over cap.
   if (recentNotifications.size > MAX_DEDUP_ENTRIES) {
     for (const [k, t] of recentNotifications) {
       if (now - t >= DEDUP_WINDOW_MS) recentNotifications.delete(k);
@@ -44,24 +41,17 @@ function isDuplicateNotification(event: NotificationReceivedEvent): boolean {
   return false;
 }
 
-/**
- * Start the notification listener and wire it to the parser + wallet store.
- * Call this once after notification access is granted.
- */
 export function initNotificationListener(): void {
   if (!isAvailable) return;
-  if (unsubscribe) return; // Already initialized
+  if (unsubscribe) return;
 
   startListening();
 
   unsubscribe = addNotificationListener((event: NotificationReceivedEvent) => {
-    handleIncomingNotification(event);
+    void handleIncomingNotification(event);
   });
 }
 
-/**
- * Stop the notification listener.
- */
 export function teardownNotificationListener(): void {
   if (unsubscribe) {
     unsubscribe();
@@ -69,15 +59,11 @@ export function teardownNotificationListener(): void {
   }
 }
 
-/**
- * Process an incoming notification against configured wallets.
- */
-function handleIncomingNotification(event: NotificationReceivedEvent): void {
+async function handleIncomingNotification(event: NotificationReceivedEvent): Promise<void> {
   if (isDuplicateNotification(event)) return;
 
   const wallets = useWalletStore.getState().wallets;
 
-  // Find wallets that use notification tracking and match this package
   const matchingWallets = wallets.filter(
     (w) =>
       w.trackingMethod === 'notification' &&
@@ -87,17 +73,32 @@ function handleIncomingNotification(event: NotificationReceivedEvent): void {
 
   if (matchingWallets.length === 0) return;
 
-  // Combine title and text for parsing (some apps put amounts in titles)
   const fullText = [event.title, event.text].filter(Boolean).join(' ');
 
   for (const wallet of matchingWallets) {
     const parser = getParserForProvider(wallet.providerKey);
-    if (!parser) continue;
+    let result = parser ? parser.parse(fullText) : null;
 
-    const result = parser.parse(fullText);
-    if (!result) continue;
+    if (!result) {
+      try {
+        result = await parseMessageWithAi(fullText);
+      } catch {
+        useAiQueueStore.getState().enqueueMessage({
+          walletId: wallet.id,
+          walletName: wallet.displayName,
+          providerKey: wallet.providerKey,
+          source: 'notification',
+          body: fullText,
+          timestamp: Date.now(),
+        });
+        continue;
+      }
 
-    // Prefer the absolute balance stated in the notification when present.
+      if (!result) {
+        continue;
+      }
+    }
+
     const newBalance =
       result.newBalance ??
       (result.direction === 'credit'
@@ -110,7 +111,6 @@ function handleIncomingNotification(event: NotificationReceivedEvent): void {
 
     useWalletStore.getState().updateBalance(wallet.id, newBalance);
 
-    // Log the transaction to history (offline-first; syncs when online).
     recordTransaction({
       walletId: wallet.id,
       walletName: wallet.displayName,
@@ -120,7 +120,6 @@ function handleIncomingNotification(event: NotificationReceivedEvent): void {
       source: 'notification',
     });
 
-    // Sync to cloud in background
     const user = useAuthStore.getState().user;
     if (user) {
       void pushBalanceUpdate(wallet.id, newBalance);

@@ -14,6 +14,8 @@ import { initNotificationListener } from '../src/lib/notificationHandler';
 import { checkSmsPermission } from '../modules/sms-listener';
 import { checkNotificationPermission } from '../modules/notification-listener';
 
+import { processPendingAiQueue } from '../src/lib/aiParser';
+
 SplashScreen.preventAutoHideAsync();
 
 export default function RootLayout() {
@@ -45,11 +47,13 @@ export default function RootLayout() {
   //     listener may have missed them, but they're in the system inbox).
   //  2. Flush pending cloud sync — pushes balance changes and wallet deletions
   //     that happened while offline, now that we may have connectivity again.
+  //  3. Process pending AI queue — parses offline SMS/notifications.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
         void reconcileSms();
+        void processPendingAiQueue();
         const user = useAuthStore.getState().user;
         if (user) void flushPendingSync(user.id);
       }
