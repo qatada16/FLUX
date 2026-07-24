@@ -114,10 +114,12 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
   for (const wallet of matchingWallets) {
     const parser = getParserForProvider(wallet.providerKey);
     let result = parser ? parser.parse(msg.body) : null;
+    let isAiParsed = false;
 
     if (!result) {
       try {
         result = await parseMessageWithAi(msg.body);
+        if (result) isAiParsed = true;
       } catch {
         useAiQueueStore.getState().enqueueMessage({
           walletId: wallet.id,
@@ -135,6 +137,15 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
       }
     }
 
+    // Infer amount & direction from balance delta if AI only detected New_Amount
+    if (isAiParsed && (!result.amount || result.amount === 0) && result.newBalance !== undefined) {
+      const delta = result.newBalance - wallet.balance;
+      if (delta !== 0) {
+        result.amount = Math.abs(delta);
+        result.direction = delta > 0 ? 'credit' : 'debit';
+      }
+    }
+
     const newBalance =
       result.newBalance ??
       (result.direction === 'credit'
@@ -147,14 +158,16 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
 
     useWalletStore.getState().updateBalance(wallet.id, newBalance);
 
-    recordTransaction({
-      walletId: wallet.id,
-      walletName: wallet.displayName,
-      amount: result.amount,
-      direction: result.direction,
-      balanceAfter: newBalance,
-      source: 'sms',
-    });
+    if (result.amount > 0) {
+      recordTransaction({
+        walletId: wallet.id,
+        walletName: wallet.displayName,
+        amount: result.amount,
+        direction: result.direction,
+        balanceAfter: newBalance,
+        source: isAiParsed ? 'ai_sms' : 'sms',
+      });
+    }
 
     const user = useAuthStore.getState().user;
     if (user) {

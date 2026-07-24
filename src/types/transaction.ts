@@ -5,7 +5,7 @@ export interface Transaction {
   amount: number; // always positive; direction gives the sign
   direction: 'credit' | 'debit';
   balanceAfter: number; // wallet balance immediately after this transaction
-  source: 'sms' | 'notification' | 'manual';
+  source: 'sms' | 'notification' | 'manual' | 'ai_sms' | 'ai_notification';
   createdAt: string; // ISO timestamp
   synced: boolean; // false until pushed to the cloud
 }

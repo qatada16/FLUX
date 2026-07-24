@@ -83,7 +83,7 @@ async function callGemini(text: string): Promise<string> {
   const key = getEnv('GEMINI_API_KEY');
   if (!key) throw new Error('Missing Gemini key');
 
-  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-1.5-flash:generateContent?key=${key}`;
+  const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
   const res = await fetch(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
@@ -212,13 +212,22 @@ export async function processPendingAiQueue(): Promise<void> {
 
     for (const item of pending) {
       try {
-        const result = await parseMessageWithAi(item.body);
+        let result = await parseMessageWithAi(item.body);
         if (result) {
           const wallet = useWalletStore
             .getState()
             .wallets.find((w) => w.id === item.walletId);
 
           if (wallet) {
+            // Infer amount & direction from balance delta if AI only detected New_Amount
+            if ((!result.amount || result.amount === 0) && result.newBalance !== undefined) {
+              const delta = result.newBalance - wallet.balance;
+              if (delta !== 0) {
+                result.amount = Math.abs(delta);
+                result.direction = delta > 0 ? 'credit' : 'debit';
+              }
+            }
+
             const newBalance =
               result.newBalance ??
               (result.direction === 'credit'
@@ -227,14 +236,16 @@ export async function processPendingAiQueue(): Promise<void> {
 
             useWalletStore.getState().updateBalance(wallet.id, newBalance);
 
-            recordTransaction({
-              walletId: wallet.id,
-              walletName: wallet.displayName,
-              amount: result.amount,
-              direction: result.direction,
-              balanceAfter: newBalance,
-              source: item.source,
-            });
+            if (result.amount > 0) {
+              recordTransaction({
+                walletId: wallet.id,
+                walletName: wallet.displayName,
+                amount: result.amount,
+                direction: result.direction,
+                balanceAfter: newBalance,
+                source: item.source === 'sms' ? 'ai_sms' : 'ai_notification',
+              });
+            }
 
             const user = useAuthStore.getState().user;
             if (user) {

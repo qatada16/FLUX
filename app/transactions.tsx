@@ -105,6 +105,7 @@ function TransactionRow({ tx, index }: { tx: Transaction; index: number }) {
         <Text style={[styles.timestamp, { color: theme.textSecondary }]}>
           {formatDateTime(tx.createdAt)}
           {tx.source === 'manual' ? '  ·  Manual' : ''}
+          {tx.source === 'ai_sms' || tx.source === 'ai_notification' ? '  ·  ✨ Detected by AI' : ''}
         </Text>
       </View>
 
