@@ -18,6 +18,7 @@ import { useWalletStore } from '../../src/store/walletStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { pushBalanceUpdate, deleteWalletFromCloud, pushAllWalletsToCloud } from '../../src/lib/sync';
 import { recordTransaction } from '../../src/lib/transactionSync';
+import { notifyTransaction } from '../../src/lib/notify';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import type { TrackingMethod } from '../../src/types/wallet';
 
@@ -91,6 +92,12 @@ export default function WalletDetailScreen() {
         direction: delta >= 0 ? 'credit' : 'debit',
         balanceAfter: newBalance,
         source: 'manual',
+      });
+      void notifyTransaction({
+        walletName: wallet.displayName,
+        amount: Math.abs(delta),
+        direction: delta >= 0 ? 'credit' : 'debit',
+        balanceAfter: newBalance,
       });
     }
 

@@ -13,7 +13,10 @@ import { useAiQueueStore } from '../store/aiQueueStore';
 import { pushBalanceUpdate } from './sync';
 import { recordTransaction } from './transactionSync';
 import { getParserForProvider } from './parsers';
-import { parseMessageWithAi, processPendingAiQueue } from './aiParser';
+import { parseMessageWithAi, processPendingAiQueue, hasAiKeys } from './aiParser';
+import { containsPossibleAmount } from './aiPrefilter';
+import { notifyTransaction } from './notify';
+import { AI_PROVIDER_LABELS } from '../store/aiKeysStore';
 
 let unsubscribe: (() => void) | null = null;
 let reconcileTimer: ReturnType<typeof setTimeout> | null = null;
@@ -114,12 +117,19 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
   for (const wallet of matchingWallets) {
     const parser = getParserForProvider(wallet.providerKey);
     let result = parser ? parser.parse(msg.body) : null;
-    let isAiParsed = false;
+    let aiProvider: string | undefined;
 
     if (!result) {
+      // Only involve AI when keys exist and the text actually holds a number —
+      // promos with no figures never reach a provider.
+      if (!hasAiKeys() || !containsPossibleAmount(msg.body)) continue;
+
       try {
-        result = await parseMessageWithAi(msg.body);
-        if (result) isAiParsed = true;
+        const outcome = await parseMessageWithAi(msg.body);
+        if (outcome) {
+          result = outcome.result;
+          aiProvider = AI_PROVIDER_LABELS[outcome.provider];
+        }
       } catch {
         useAiQueueStore.getState().enqueueMessage({
           walletId: wallet.id,
@@ -136,6 +146,8 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
         continue;
       }
     }
+
+    const isAiParsed = !!aiProvider;
 
     // Infer amount & direction from balance delta if AI only detected New_Amount
     if (isAiParsed && (!result.amount || result.amount === 0) && result.newBalance !== undefined) {
@@ -166,6 +178,13 @@ async function applySmsToWallets(msg: SmsInboxMessage): Promise<void> {
         direction: result.direction,
         balanceAfter: newBalance,
         source: isAiParsed ? 'ai_sms' : 'sms',
+      });
+      void notifyTransaction({
+        walletName: wallet.displayName,
+        amount: result.amount,
+        direction: result.direction,
+        balanceAfter: newBalance,
+        aiProvider,
       });
     }
 

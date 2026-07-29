@@ -17,6 +17,7 @@ import { useTheme } from '../../src/theme';
 import { useAuthStore } from '../../src/store/authStore';
 import { useWalletStore } from '../../src/store/walletStore';
 import { pullWalletsFromCloud, flushPendingSync } from '../../src/lib/sync';
+import { pullAiKeys } from '../../src/lib/aiKeysSync';
 
 export default function LoginScreen() {
   const { theme } = useTheme();
@@ -42,6 +43,8 @@ export default function LoginScreen() {
     // After login, try to pull wallets from cloud
     const user = useAuthStore.getState().user;
     if (user) {
+      // Load this account's AI keys (replaces any previous user's cache).
+      void pullAiKeys(user.id);
       const result = await pullWalletsFromCloud(user.id);
       if (result === 'found') {
         // Cloud had wallets — push any pending local changes, then go.

@@ -5,6 +5,7 @@ import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
 import { useTheme } from '../src/theme';
 import { pullWalletsFromCloud } from '../src/lib/sync';
+import { pullAiKeys } from '../src/lib/aiKeysSync';
 
 export default function IndexScreen() {
   const { theme } = useTheme();
@@ -26,6 +27,7 @@ export default function IndexScreen() {
           pullWalletsFromCloud(user.id),
           new Promise((resolve) => setTimeout(resolve, 4000)),
         ]);
+        void pullAiKeys(user.id);
         const hasWallets = useWalletStore.getState().hasCompletedOnboarding;
         if (hasWallets) {
           router.replace('/dashboard');

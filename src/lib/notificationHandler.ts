@@ -10,7 +10,10 @@ import { useAiQueueStore } from '../store/aiQueueStore';
 import { pushBalanceUpdate } from './sync';
 import { recordTransaction } from './transactionSync';
 import { getParserForProvider } from './parsers';
-import { parseMessageWithAi } from './aiParser';
+import { parseMessageWithAi, hasAiKeys } from './aiParser';
+import { containsPossibleAmount } from './aiPrefilter';
+import { notifyTransaction } from './notify';
+import { AI_PROVIDER_LABELS } from '../store/aiKeysStore';
 
 let unsubscribe: (() => void) | null = null;
 
@@ -78,12 +81,18 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
   for (const wallet of matchingWallets) {
     const parser = getParserForProvider(wallet.providerKey);
     let result = parser ? parser.parse(fullText) : null;
-    let isAiParsed = false;
+    let aiProvider: string | undefined;
 
     if (!result) {
+      // Only involve AI when keys exist and the text actually holds a number.
+      if (!hasAiKeys() || !containsPossibleAmount(fullText)) continue;
+
       try {
-        result = await parseMessageWithAi(fullText);
-        if (result) isAiParsed = true;
+        const outcome = await parseMessageWithAi(fullText);
+        if (outcome) {
+          result = outcome.result;
+          aiProvider = AI_PROVIDER_LABELS[outcome.provider];
+        }
       } catch {
         useAiQueueStore.getState().enqueueMessage({
           walletId: wallet.id,
@@ -100,6 +109,8 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
         continue;
       }
     }
+
+    const isAiParsed = !!aiProvider;
 
     // Infer amount & direction from balance delta if AI only detected New_Amount
     if (isAiParsed && (!result.amount || result.amount === 0) && result.newBalance !== undefined) {
@@ -130,6 +141,13 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
         direction: result.direction,
         balanceAfter: newBalance,
         source: isAiParsed ? 'ai_notification' : 'notification',
+      });
+      void notifyTransaction({
+        walletName: wallet.displayName,
+        amount: result.amount,
+        direction: result.direction,
+        balanceAfter: newBalance,
+        aiProvider,
       });
     }
 

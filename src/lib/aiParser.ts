@@ -2,8 +2,17 @@ import type { ParseResult } from './parsers/types';
 import { useAiQueueStore } from '../store/aiQueueStore';
 import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
+import {
+  useAiKeysStore,
+  getUsableKeys,
+  AI_PROVIDERS,
+  AI_PROVIDER_LABELS,
+  type AiProvider,
+} from '../store/aiKeysStore';
+import { containsPossibleAmount } from './aiPrefilter';
 import { pushBalanceUpdate } from './sync';
 import { recordTransaction } from './transactionSync';
+import { notifyTransaction } from './notify';
 
 const SYSTEM_PROMPT = `You are a financial transaction parser for bank and mobile wallet SMS/notifications in Pakistan.
 Analyze the message and extract the transaction amount and new/available account balance.
@@ -23,22 +32,24 @@ Rules:
 5. If new balance is not stated, set "New_Amount" to "".
 6. If neither is detected, set both to "".`;
 
-function getEnv(key: string): string {
-  return process.env[`EXPO_PUBLIC_${key}`] || process.env[key] || '';
+// Result of an AI parse, including which provider produced it.
+export interface AiParseOutcome {
+  result: ParseResult;
+  provider: AiProvider;
 }
 
-async function callCerebras(text: string): Promise<string> {
-  const key = getEnv('CEREBRAS_API_KEY');
-  if (!key) throw new Error('Missing Cerebras key');
-
-  const res = await fetch('https://api.cerebras.ai/v1/chat/completions', {
+async function chatCompletion(
+  url: string,
+  key: string,
+  model: string,
+  text: string,
+  label: string
+): Promise<string> {
+  const res = await fetch(url, {
     method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
+    headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
-      model: 'llama3.1-8b',
+      model,
       messages: [
         { role: 'system', content: SYSTEM_PROMPT },
         { role: 'user', content: text },
@@ -47,42 +58,12 @@ async function callCerebras(text: string): Promise<string> {
       max_tokens: 150,
     }),
   });
-
-  if (!res.ok) throw new Error(`Cerebras error: ${res.status}`);
+  if (!res.ok) throw new Error(`${label} error: ${res.status}`);
   const data = await res.json();
   return data?.choices?.[0]?.message?.content || '';
 }
 
-async function callMistral(text: string): Promise<string> {
-  const key = getEnv('MISTRAL_API_KEY');
-  if (!key) throw new Error('Missing Mistral key');
-
-  const res = await fetch('https://api.mistral.ai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: 'mistral-small-latest',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: text },
-      ],
-      temperature: 0,
-      max_tokens: 150,
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Mistral error: ${res.status}`);
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || '';
-}
-
-async function callGemini(text: string): Promise<string> {
-  const key = getEnv('GEMINI_API_KEY');
-  if (!key) throw new Error('Missing Gemini key');
-
+async function callGemini(key: string, text: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
   const res = await fetch(url, {
     method: 'POST',
@@ -92,46 +73,47 @@ async function callGemini(text: string): Promise<string> {
       generationConfig: { temperature: 0, maxOutputTokens: 150 },
     }),
   });
-
   if (!res.ok) throw new Error(`Gemini error: ${res.status}`);
   const data = await res.json();
   return data?.candidates?.[0]?.content?.parts?.[0]?.text || '';
 }
 
-async function callGroq(text: string): Promise<string> {
-  const key = getEnv('GROQ_API_KEY');
-  if (!key) throw new Error('Missing Groq key');
-
-  const res = await fetch('https://api.groq.com/openai/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${key}`,
-    },
-    body: JSON.stringify({
-      model: 'llama-3.1-8b-instant',
-      messages: [
-        { role: 'system', content: SYSTEM_PROMPT },
-        { role: 'user', content: text },
-      ],
-      temperature: 0,
-      max_tokens: 150,
-    }),
-  });
-
-  if (!res.ok) throw new Error(`Groq error: ${res.status}`);
-  const data = await res.json();
-  return data?.choices?.[0]?.message?.content || '';
+function callProvider(provider: AiProvider, key: string, text: string): Promise<string> {
+  switch (provider) {
+    case 'cerebras':
+      return chatCompletion(
+        'https://api.cerebras.ai/v1/chat/completions',
+        key,
+        'llama3.1-8b',
+        text,
+        'Cerebras'
+      );
+    case 'mistral':
+      return chatCompletion(
+        'https://api.mistral.ai/v1/chat/completions',
+        key,
+        'mistral-small-latest',
+        text,
+        'Mistral'
+      );
+    case 'gemini':
+      return callGemini(key, text);
+    case 'groq':
+      return chatCompletion(
+        'https://api.groq.com/openai/v1/chat/completions',
+        key,
+        'llama-3.1-8b-instant',
+        text,
+        'Groq'
+      );
+  }
 }
 
 function parseAiJsonResponse(rawText: string): ParseResult | null {
   if (!rawText) return null;
 
   try {
-    const cleaned = rawText
-      .replace(/```json/gi, '')
-      .replace(/```/g, '')
-      .trim();
+    const cleaned = rawText.replace(/```json/gi, '').replace(/```/g, '').trim();
 
     const parsed = JSON.parse(cleaned);
     const rawTx = typeof parsed.Transaction === 'string' ? parsed.Transaction.trim() : '';
@@ -159,9 +141,7 @@ function parseAiJsonResponse(rawText: string): ParseResult | null {
 
     if (rawNew) {
       const num = parseFloat(rawNew.replace(/,/g, ''));
-      if (!isNaN(num) && num >= 0) {
-        newBalance = num;
-      }
+      if (!isNaN(num) && num >= 0) newBalance = num;
     }
 
     if (newBalance !== undefined && (!direction || isNaN(amount) || amount <= 0)) {
@@ -178,24 +158,46 @@ function parseAiJsonResponse(rawText: string): ParseResult | null {
   }
 }
 
-export async function parseMessageWithAi(text: string): Promise<ParseResult | null> {
-  const providers = [
-    { name: 'Cerebras', fn: callCerebras },
-    { name: 'Mistral', fn: callMistral },
-    { name: 'Gemini', fn: callGemini },
-    { name: 'Groq', fn: callGroq },
-  ];
+/** True when the signed-in user has at least one AI key configured. */
+export function hasAiKeys(): boolean {
+  const user = useAuthStore.getState().user;
+  const keys = getUsableKeys(user?.id);
+  return AI_PROVIDERS.some((p) => !!keys[p]);
+}
 
-  for (const p of providers) {
+/**
+ * Try each provider the user configured, in fallback order, until one returns
+ * a usable result. Every attempt increments that provider's usage counter.
+ * Returns null when the user has no keys or nothing parsed.
+ */
+export async function parseMessageWithAi(text: string): Promise<AiParseOutcome | null> {
+  // Don't spend a call on messages with no number in them at all.
+  if (!containsPossibleAmount(text)) return null;
+
+  const user = useAuthStore.getState().user;
+  const keys = getUsableKeys(user?.id);
+
+  let lastError: unknown = null;
+  let attempted = false;
+
+  for (const provider of AI_PROVIDERS) {
+    const key = keys[provider];
+    if (!key) continue;
+
+    attempted = true;
+    useAiKeysStore.getState().incrementUsage(provider);
     try {
-      const raw = await p.fn(text);
+      const raw = await callProvider(provider, key, text);
       const result = parseAiJsonResponse(raw);
-      if (result) return result;
-    } catch {
-      // Continue to next AI provider on error
+      if (result) return { result, provider };
+    } catch (err) {
+      lastError = err;
     }
   }
 
+  // Signal "couldn't reach any provider" so callers can queue for retry,
+  // instead of silently discarding the message.
+  if (attempted && lastError) throw lastError;
   return null;
 }
 
@@ -203,6 +205,7 @@ let isProcessingQueue = false;
 
 export async function processPendingAiQueue(): Promise<void> {
   if (isProcessingQueue) return;
+  if (!hasAiKeys()) return;
   isProcessingQueue = true;
 
   try {
@@ -212,14 +215,14 @@ export async function processPendingAiQueue(): Promise<void> {
 
     for (const item of pending) {
       try {
-        let result = await parseMessageWithAi(item.body);
-        if (result) {
+        const outcome = await parseMessageWithAi(item.body);
+        if (outcome) {
+          const result = outcome.result;
           const wallet = useWalletStore
             .getState()
             .wallets.find((w) => w.id === item.walletId);
 
           if (wallet) {
-            // Infer amount & direction from balance delta if AI only detected New_Amount
             if ((!result.amount || result.amount === 0) && result.newBalance !== undefined) {
               const delta = result.newBalance - wallet.balance;
               if (delta !== 0) {
@@ -245,17 +248,20 @@ export async function processPendingAiQueue(): Promise<void> {
                 balanceAfter: newBalance,
                 source: item.source === 'sms' ? 'ai_sms' : 'ai_notification',
               });
+              void notifyTransaction({
+                walletName: wallet.displayName,
+                amount: result.amount,
+                direction: result.direction,
+                balanceAfter: newBalance,
+                aiProvider: AI_PROVIDER_LABELS[outcome.provider],
+              });
             }
 
             const user = useAuthStore.getState().user;
-            if (user) {
-              void pushBalanceUpdate(wallet.id, newBalance);
-            }
+            if (user) void pushBalanceUpdate(wallet.id, newBalance);
           }
-          queueStore.dequeueMessage(item.id);
-        } else {
-          queueStore.dequeueMessage(item.id);
         }
+        queueStore.dequeueMessage(item.id);
       } catch {
         break;
       }

@@ -7,6 +7,7 @@ import { showAppModal } from '../src/components/AppModal';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useWalletStore } from '../src/store/walletStore';
 import { useTransactionStore } from '../src/store/transactionStore';
+import { useAiKeysStore, AI_PROVIDERS } from '../src/store/aiKeysStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
 import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
@@ -35,6 +36,9 @@ export default function SettingsScreen() {
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const resetOnboarding = useWalletStore((s) => s.resetOnboarding);
   const clearTransactions = useTransactionStore((s) => s.clear);
+  const aiKeys = useAiKeysStore((s) => s.keys);
+  const clearAiKeys = useAiKeysStore((s) => s.clear);
+  const aiKeyCount = AI_PROVIDERS.filter((p) => !!aiKeys[p]).length;
   const wallets = useWalletStore((s) => s.wallets);
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
@@ -54,6 +58,8 @@ export default function SettingsScreen() {
 
   const handleSignOut = async () => {
     await signOut();
+    // Drop cached AI keys so a different account can never reuse them.
+    clearAiKeys();
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     showAppModal({ title: 'Signed out', message: 'You are now using Flux offline.' });
   };
@@ -136,6 +142,23 @@ export default function SettingsScreen() {
           style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
           <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Transaction History</Text>
+          <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>→</Text>
+        </Pressable>
+        <Pressable
+          onPress={() => {
+            Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            router.push('/ai-keys');
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>AI Detection Keys</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              {aiKeyCount > 0
+                ? `${aiKeyCount} provider${aiKeyCount === 1 ? '' : 's'} configured`
+                : 'Not configured — AI parsing off'}
+            </Text>
+          </View>
           <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>→</Text>
         </Pressable>
       </View>

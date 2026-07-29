@@ -9,6 +9,7 @@ import { AppModalHost } from '../src/components/AppModal';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useAuthStore } from '../src/store/authStore';
 import { flushPendingSync } from '../src/lib/sync';
+import { initNotifications } from '../src/lib/notify';
 import { initSmsListener, reconcileSms } from '../src/lib/smsHandler';
 import { initNotificationListener } from '../src/lib/notificationHandler';
 import { checkSmsPermission } from '../modules/sms-listener';
@@ -32,6 +33,7 @@ export default function RootLayout() {
   // Initialize native listeners if permissions are already granted
   useEffect(() => {
     if (Platform.OS === 'android') {
+      void initNotifications();
       checkSmsPermission().then((granted) => {
         if (granted) initSmsListener();
       });
