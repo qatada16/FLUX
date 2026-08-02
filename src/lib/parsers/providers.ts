@@ -1,4 +1,5 @@
 import type { ParserConfig, ParseResult } from './types';
+import { looksPromotional, hasCompletedTransactionVerb } from '../promoFilter';
 
 // Currency tokens we recognise. Banks/wallets in PK use "Rs", "Rs.", "RS",
 // "PKR", and occasionally "Rs/-" or "PKR." — all case-insensitive.
@@ -59,6 +60,10 @@ function genericParse(body: string): ParseResult | null {
   ];
   if (skipPatterns.some((p) => p.test(body))) return null;
 
+  // Advertisements reuse transaction words ("Rs.100 cashback payein"), so drop
+  // anything that reads as marketing before looking for an amount.
+  if (looksPromotional(body)) return null;
+
   // Pull the stated post-transaction balance out FIRST, then remove that
   // clause so the transaction-amount search below can never mistake the
   // balance figure for the amount (e.g. "Avl Bal Rs.9,000: Rs.500 debited").
@@ -71,6 +76,11 @@ function genericParse(body: string): ParseResult | null {
   const newBalance =
     !isNaN(parsedBalance) && parsedBalance >= 0 ? parsedBalance : undefined;
   const searchBody = balanceMatch ? body.replace(balanceMatch[0], ' ') : body;
+
+  // Proof requirement: either a completed action ("debited") or a stated
+  // balance. Without one, ambiguous nouns like "load"/"cashback" are not
+  // enough to move a balance.
+  if (!balanceMatch && !hasCompletedTransactionVerb(body)) return null;
 
   const amount = extractAmount(searchBody);
   if (!amount) return null;

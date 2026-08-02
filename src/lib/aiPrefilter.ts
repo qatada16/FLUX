@@ -1,3 +1,5 @@
+import { looksPromotional } from './promoFilter';
+
 // Gate before spending an AI call: a message can only be a transaction if it
 // contains a number that could plausibly be an amount. Promo/marketing text
 // with no figures is dropped for free.
@@ -16,11 +18,12 @@ const NOISE = [
 const AMOUNT = /\d/;
 
 /**
- * True if the text still holds a number after removing non-amount noise.
- * Used to decide whether a message is worth sending to an AI provider.
+ * True if the text still holds a number after removing non-amount noise, and
+ * doesn't read as marketing. Decides whether a message is worth an AI call.
  */
 export function containsPossibleAmount(text: string): boolean {
   if (!text) return false;
+  if (looksPromotional(text)) return false;
   let cleaned = text;
   for (const re of NOISE) cleaned = cleaned.replace(re, ' ');
   return AMOUNT.test(cleaned);
