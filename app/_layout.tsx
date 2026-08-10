@@ -1,4 +1,4 @@
-import React, { useCallback, useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { Stack } from 'expo-router';
 import { StatusBar } from 'expo-status-bar';
 import { AppState, Platform, View } from 'react-native';
@@ -14,6 +14,7 @@ import { initSmsListener, reconcileSms } from '../src/lib/smsHandler';
 import { initNotificationListener } from '../src/lib/notificationHandler';
 import { checkSmsPermission } from '../modules/sms-listener';
 import { checkNotificationPermission } from '../modules/notification-listener';
+import { startForegroundService } from '../modules/foreground-service';
 
 import { processPendingAiQueue } from '../src/lib/aiParser';
 
@@ -32,15 +33,19 @@ export default function RootLayout() {
 
   // Initialize native listeners if permissions are already granted
   useEffect(() => {
-    if (Platform.OS === 'android') {
-      void initNotifications();
-      checkSmsPermission().then((granted) => {
-        if (granted) initSmsListener();
-      });
-      checkNotificationPermission().then((granted) => {
-        if (granted) initNotificationListener();
-      });
-    }
+    if (Platform.OS !== 'android') return;
+    void initNotifications();
+    void (async () => {
+      const [sms, notif] = await Promise.all([
+        checkSmsPermission(),
+        checkNotificationPermission(),
+      ]);
+      if (sms) initSmsListener();
+      if (notif) initNotificationListener();
+      // Keep the process alive so those listeners keep firing — and alerts keep
+      // arriving — once the app is closed.
+      if (sms || notif) startForegroundService();
+    })();
   }, []);
 
   // Every time the app comes to the foreground:
@@ -63,26 +68,28 @@ export default function RootLayout() {
     return () => sub.remove();
   }, []);
 
-  const onLayoutRootView = useCallback(async () => {
-    if (fontsLoaded) {
-      await SplashScreen.hideAsync();
-    }
+  // Keep the splash up until fonts are ready, then hand over to a themed root
+  // view — never render nothing, or the bare window background shows through.
+  useEffect(() => {
+    if (fontsLoaded) SplashScreen.hideAsync().catch(() => {});
   }, [fontsLoaded]);
-
-  if (!fontsLoaded) return null;
 
   return (
     <ThemeContext.Provider value={{ theme, mode: themeMode }}>
-      <View style={{ flex: 1, backgroundColor: theme.background }} onLayout={onLayoutRootView}>
+      <View style={{ flex: 1, backgroundColor: theme.background }}>
         <StatusBar style={themeMode === 'dark' ? 'light' : 'dark'} />
-        <Stack
-          screenOptions={{
-            headerShown: false,
-            contentStyle: { backgroundColor: theme.background },
-            animation: 'slide_from_right',
-          }}
-        />
-        <AppModalHost />
+        {fontsLoaded && (
+          <>
+            <Stack
+              screenOptions={{
+                headerShown: false,
+                contentStyle: { backgroundColor: theme.background },
+                animation: 'slide_from_right',
+              }}
+            />
+            <AppModalHost />
+          </>
+        )}
       </View>
     </ThemeContext.Provider>
   );

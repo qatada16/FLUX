@@ -6,6 +6,7 @@
     "orientation": "portrait",
     "icon": "./assets/FLUX.png",
     "userInterfaceStyle": "dark",
+    "backgroundColor": "#0B0E14",
     "scheme": "flux",
     "ios": {
       "supportsTablet": true

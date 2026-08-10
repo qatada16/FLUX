@@ -12,6 +12,7 @@ import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
 import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
 import { checkNotificationPermission, openNotificationSettings, isAvailable as notifAvailable } from '../modules/notification-listener';
+import { startForegroundService } from '../modules/foreground-service';
 import { initSmsListener } from '../src/lib/smsHandler';
 import { initNotificationListener } from '../src/lib/notificationHandler';
 import { requestBatteryOptimizationExclusion } from '../src/lib/battery';
@@ -183,6 +184,7 @@ export default function SettingsScreen() {
               setSmsGranted(granted);
               if (granted) {
                 initSmsListener();
+                startForegroundService();
                 showAppModal({ title: 'SMS Access Granted', message: 'Flux will now read incoming SMS to update balances.' });
               }
             }, 1000);
@@ -224,6 +226,7 @@ export default function SettingsScreen() {
                         setNotifGranted(granted);
                         if (granted) {
                           initNotificationListener();
+                          startForegroundService();
                         }
                       });
                     }, 3000);
