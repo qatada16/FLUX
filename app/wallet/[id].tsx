@@ -22,6 +22,31 @@ import { notifyTransaction } from '../../src/lib/notify';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import type { TrackingMethod } from '../../src/types/wallet';
 
+type BalanceMode = 'set' | 'add' | 'subtract';
+
+const QUICK_AMOUNTS = [100, 500, 1000, 5000];
+// Nine integer digits is the most the input accepts, so this is the ceiling a
+// single typed figure can reach; adding two of them is what we guard against.
+const MAX_BALANCE = 999999999.99;
+
+const round2 = (n: number) => Math.round((n + Number.EPSILON) * 100) / 100;
+
+const formatAmount = (n: number) =>
+  n.toLocaleString('en-PK', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+
+// Keeps the field to a single dot, two decimals and nine integer digits, so a
+// stray keystroke can't produce a value parseFloat would silently truncate.
+const sanitizeAmount = (raw: string) => {
+  let v = raw.replace(/[^0-9.]/g, '');
+  const firstDot = v.indexOf('.');
+  if (firstDot !== -1) {
+    v = v.slice(0, firstDot + 1) + v.slice(firstDot + 1).replace(/\./g, '');
+  }
+  const [intPart, decPart] = v.split('.');
+  const clippedInt = intPart.slice(0, 9);
+  return decPart === undefined ? clippedInt : `${clippedInt}.${decPart.slice(0, 2)}`;
+};
+
 export default function WalletDetailScreen() {
   const { theme } = useTheme();
   const { id } = useLocalSearchParams<{ id: string }>();
@@ -31,6 +56,7 @@ export default function WalletDetailScreen() {
   const removeWallet = useWalletStore((s) => s.removeWallet);
 
   const [editBalance, setEditBalance] = useState('');
+  const [balanceMode, setBalanceMode] = useState<BalanceMode>('set');
   const [isEditing, setIsEditing] = useState(false);
   const [editMethod, setEditMethod] = useState<TrackingMethod | null>(null);
   const [editSender, setEditSender] = useState('');
@@ -71,6 +97,7 @@ export default function WalletDetailScreen() {
 
   const startEditing = () => {
     setIsEditing(true);
+    setBalanceMode('set');
     setEditBalance(wallet.balance.toString());
     setEditMethod(wallet.trackingMethod);
     setEditSender(wallet.smsSender || '');
@@ -78,11 +105,58 @@ export default function WalletDetailScreen() {
     setNewSmsSender('');
   };
 
+  // What the user typed: an absolute target in 'set' mode, otherwise the amount
+  // to move. An empty field means "leave the balance alone" — never zero it.
+  const typedAmount = parseFloat(editBalance);
+  const hasAmount = Number.isFinite(typedAmount);
+
+  const newBalance = !hasAmount
+    ? wallet.balance
+    : balanceMode === 'set'
+      ? round2(typedAmount)
+      : balanceMode === 'add'
+        ? round2(wallet.balance + typedAmount)
+        : round2(wallet.balance - typedAmount);
+
+  const delta = round2(newBalance - wallet.balance);
+  const belowZero = newBalance < 0;
+  const overMax = newBalance > MAX_BALANCE;
+  const balanceValid = !belowZero && !overMax;
+
+  const changeMode = (next: BalanceMode) => {
+    if (next === balanceMode) return;
+    void Haptics.selectionAsync();
+    setBalanceMode(next);
+    // The absolute balance is only a sensible starting value in 'set' mode —
+    // carrying it into 'add' would offer to double the wallet.
+    setEditBalance(next === 'set' ? wallet.balance.toString() : '');
+  };
+
+  const bumpAmount = (increment: number) => {
+    void Haptics.selectionAsync();
+    const base = Number.isFinite(typedAmount) ? typedAmount : 0;
+    setEditBalance(sanitizeAmount(String(round2(base + increment))));
+  };
+
+  const clearAmount = () => {
+    void Haptics.selectionAsync();
+    setEditBalance('');
+  };
+
+  const modeStyles: Record<BalanceMode, { label: string; sign: string; color: string }> = {
+    set: { label: 'Set', sign: '', color: theme.accentTertiary },
+    add: { label: 'Add', sign: '+', color: theme.success },
+    subtract: { label: 'Subtract', sign: '−', color: theme.danger },
+  };
+  const activeMode = modeStyles[balanceMode];
+
   const saveChanges = () => {
-    const newBalance = parseFloat(editBalance) || 0;
+    if (!balanceValid) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      return;
+    }
 
     if (newBalance !== wallet.balance) {
-      const delta = newBalance - wallet.balance;
       updateBalance(wallet.id, newBalance);
       // Record the manual adjustment in history too.
       recordTransaction({
@@ -199,23 +273,176 @@ export default function WalletDetailScreen() {
         <Animated.View entering={FadeInDown.delay(100).duration(400)}>
           <View style={[styles.balanceCard, { backgroundColor: theme.surface, borderColor: theme.border }]}>
             <Text style={[styles.balanceLabel, { color: theme.textSecondary }]}>Current Balance</Text>
-            {isEditing ? (
-              <View style={[styles.balanceInputRow, { borderColor: theme.accentPrimary }]}>
-                <Text style={[styles.currencyPrefix, { color: theme.textSecondary }]}>Rs.</Text>
-                <TextInput
-                  style={[styles.balanceInput, { color: theme.textPrimary }]}
-                  value={editBalance}
-                  onChangeText={(v) => setEditBalance(v.replace(/[^0-9.]/g, ''))}
-                  keyboardType="decimal-pad"
-                  autoFocus
-                  selectTextOnFocus
-                />
-              </View>
-            ) : (
-              <Text style={[styles.balanceValue, { color: theme.textPrimary }]}>
-                Rs. {wallet.balance.toLocaleString('en-PK', { minimumFractionDigits: 2 })}
-              </Text>
+
+            {/* Stays on screen while editing, so the figure being adjusted is
+                never something the user has to remember. */}
+            <Text
+              style={[
+                isEditing ? styles.balanceAnchor : styles.balanceValue,
+                { color: isEditing ? theme.textSecondary : theme.textPrimary },
+              ]}
+            >
+              Rs. {formatAmount(wallet.balance)}
+            </Text>
+
+            {isEditing && (
+              <>
+                <View style={styles.modeRow}>
+                  {(['set', 'add', 'subtract'] as BalanceMode[]).map((m) => {
+                    const active = balanceMode === m;
+                    const cfg = modeStyles[m];
+                    return (
+                      <Pressable
+                        key={m}
+                        onPress={() => changeMode(m)}
+                        accessibilityRole="button"
+                        accessibilityState={{ selected: active }}
+                        accessibilityLabel={`${cfg.label} balance`}
+                        style={({ pressed }) => [
+                          styles.modeChip,
+                          {
+                            backgroundColor: active ? cfg.color : theme.surfaceElevated,
+                            borderColor: active ? cfg.color : theme.border,
+                            opacity: pressed ? 0.85 : 1,
+                          },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.modeChipText,
+                            { color: active ? '#0B0E14' : theme.textSecondary },
+                          ]}
+                        >
+                          {cfg.sign ? `${cfg.sign} ` : ''}{cfg.label}
+                        </Text>
+                      </Pressable>
+                    );
+                  })}
+                </View>
+
+                <View style={[styles.balanceInputRow, { borderColor: activeMode.color }]}>
+                  {!!activeMode.sign && (
+                    <Text style={[styles.signPrefix, { color: activeMode.color }]}>
+                      {activeMode.sign}
+                    </Text>
+                  )}
+                  <Text style={[styles.currencyPrefix, { color: theme.textSecondary }]}>Rs.</Text>
+                  <TextInput
+                    style={[styles.balanceInput, { color: theme.textPrimary }]}
+                    value={editBalance}
+                    onChangeText={(v) => setEditBalance(sanitizeAmount(v))}
+                    keyboardType="decimal-pad"
+                    autoFocus
+                    selectTextOnFocus
+                    placeholder="0.00"
+                    placeholderTextColor={theme.textSecondary + '60'}
+                    accessibilityLabel={
+                      balanceMode === 'set' ? 'New balance' : `Amount to ${balanceMode}`
+                    }
+                  />
+                </View>
+
+                <View style={styles.quickRow}>
+                  {QUICK_AMOUNTS.map((amt) => (
+                    <Pressable
+                      key={amt}
+                      onPress={() => bumpAmount(amt)}
+                      accessibilityRole="button"
+                      accessibilityLabel={`Add ${amt} to the amount`}
+                      style={({ pressed }) => [
+                        styles.quickChip,
+                        {
+                          backgroundColor: theme.surfaceElevated,
+                          borderColor: theme.border,
+                          opacity: pressed ? 0.7 : 1,
+                        },
+                      ]}
+                    >
+                      <Text style={[styles.quickChipText, { color: activeMode.color }]}>
+                        {activeMode.sign || '+'}
+                        {amt.toLocaleString('en-PK')}
+                      </Text>
+                    </Pressable>
+                  ))}
+                  {editBalance !== '' && (
+                    <Pressable
+                      onPress={clearAmount}
+                      accessibilityRole="button"
+                      accessibilityLabel="Clear amount"
+                      style={({ pressed }) => [
+                        styles.quickChip,
+                        { borderColor: theme.border, opacity: pressed ? 0.7 : 1 },
+                      ]}
+                    >
+                      <Text style={[styles.quickChipText, { color: theme.textSecondary }]}>
+                        Clear
+                      </Text>
+                    </Pressable>
+                  )}
+                </View>
+
+                {/* Live result — the arithmetic the user used to do in their head */}
+                <View
+                  style={[
+                    styles.previewBox,
+                    {
+                      borderColor: balanceValid ? theme.border : theme.danger,
+                      backgroundColor: theme.surfaceElevated,
+                    },
+                  ]}
+                >
+                  <Text style={[styles.previewLabel, { color: theme.textSecondary }]}>
+                    New balance
+                  </Text>
+                  <View style={styles.previewRow}>
+                    <Text
+                      style={[
+                        styles.previewValue,
+                        { color: balanceValid ? theme.textPrimary : theme.danger },
+                      ]}
+                    >
+                      Rs. {formatAmount(newBalance)}
+                    </Text>
+                    {delta !== 0 && balanceValid && (
+                      <View
+                        style={[
+                          styles.deltaPill,
+                          { backgroundColor: (delta > 0 ? theme.success : theme.danger) + '1F' },
+                        ]}
+                      >
+                        <Text
+                          style={[
+                            styles.deltaText,
+                            { color: delta > 0 ? theme.success : theme.danger },
+                          ]}
+                        >
+                          {delta > 0 ? '+' : '−'}
+                          {formatAmount(Math.abs(delta))}
+                        </Text>
+                      </View>
+                    )}
+                  </View>
+                  {delta === 0 && balanceValid && (
+                    <Text style={[styles.previewHint, { color: theme.textSecondary }]}>
+                      No change to the balance yet
+                    </Text>
+                  )}
+                  {belowZero && (
+                    <Text style={[styles.previewHint, { color: theme.danger }]}>
+                      That would leave −Rs. {formatAmount(Math.abs(newBalance))}. Balance can't go
+                      below Rs. 0.00 — the most you can subtract is Rs.{' '}
+                      {formatAmount(wallet.balance)}.
+                    </Text>
+                  )}
+                  {overMax && (
+                    <Text style={[styles.previewHint, { color: theme.danger }]}>
+                      That's above the maximum of Rs. {formatAmount(MAX_BALANCE)}.
+                    </Text>
+                  )}
+                </View>
+              </>
             )}
+
             <Text style={[styles.updatedAt, { color: theme.textSecondary }]}>
               Last updated: {new Date(wallet.updatedAt).toLocaleString()}
             </Text>
@@ -327,9 +554,15 @@ export default function WalletDetailScreen() {
             <>
               <Pressable
                 onPress={saveChanges}
+                disabled={!balanceValid}
+                accessibilityRole="button"
+                accessibilityState={{ disabled: !balanceValid }}
                 style={({ pressed }) => [
                   styles.actionBtn,
-                  { backgroundColor: theme.accentPrimary, opacity: pressed ? 0.85 : 1 },
+                  {
+                    backgroundColor: theme.accentPrimary,
+                    opacity: !balanceValid ? 0.4 : pressed ? 0.85 : 1,
+                  },
                 ]}
               >
                 <Text style={styles.actionBtnText}>Save Changes</Text>
@@ -421,12 +654,93 @@ const styles = StyleSheet.create({
     fontSize: 30,
     marginBottom: 8,
   },
+  balanceAnchor: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 20,
+    marginBottom: 14,
+  },
+  modeRow: {
+    flexDirection: 'row',
+    gap: 8,
+    marginBottom: 16,
+  },
+  modeChip: {
+    flex: 1,
+    borderRadius: 10,
+    borderWidth: 1,
+    paddingVertical: 10,
+    alignItems: 'center',
+  },
+  modeChipText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 13,
+  },
+  signPrefix: {
+    fontFamily: 'Sora_700Bold',
+    fontSize: 26,
+    marginRight: 6,
+  },
   balanceInputRow: {
     flexDirection: 'row',
     alignItems: 'center',
     borderBottomWidth: 2,
     paddingBottom: 8,
     marginBottom: 8,
+  },
+  quickRow: {
+    flexDirection: 'row',
+    flexWrap: 'wrap',
+    gap: 8,
+    marginTop: 6,
+    marginBottom: 16,
+  },
+  quickChip: {
+    borderRadius: 999,
+    borderWidth: 1,
+    paddingHorizontal: 14,
+    paddingVertical: 7,
+  },
+  quickChipText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 13,
+  },
+  previewBox: {
+    borderRadius: 14,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 12,
+  },
+  previewLabel: {
+    fontFamily: 'Sora_500Medium',
+    fontSize: 11,
+    letterSpacing: 0.5,
+    textTransform: 'uppercase',
+    marginBottom: 6,
+  },
+  previewRow: {
+    flexDirection: 'row',
+    alignItems: 'center',
+    flexWrap: 'wrap',
+    gap: 10,
+  },
+  previewValue: {
+    fontFamily: 'Sora_700Bold',
+    fontSize: 24,
+  },
+  deltaPill: {
+    borderRadius: 999,
+    paddingHorizontal: 10,
+    paddingVertical: 4,
+  },
+  deltaText: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 13,
+  },
+  previewHint: {
+    fontFamily: 'Sora_400Regular',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 8,
   },
   currencyPrefix: {
     fontFamily: 'Sora_600SemiBold',
