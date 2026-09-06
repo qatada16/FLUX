@@ -1,31 +1,22 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
-import type { EventSubscription } from 'expo-modules-core';
 
-// Types for notification events emitted from native
-export interface NotificationReceivedEvent {
+// A notification captured by the listener service and parked natively until
+// the next catch-up scan drains it.
+export interface PendingNotification {
+  id: string; // content-derived, so the same notification never queues twice
   packageName: string;
   title: string;
   text: string;
   timestamp: number;
 }
 
-type NotificationEventsMap = {
-  onNotificationReceived: (event: NotificationReceivedEvent) => void;
-};
-
 interface NotificationListenerNativeModule {
   checkPermission(): Promise<boolean>;
   openSettings(): void;
-  startListening(): void;
-  stopListening(): void;
-  addListener<K extends keyof NotificationEventsMap>(
-    eventName: K,
-    listener: NotificationEventsMap[K]
-  ): EventSubscription;
-  removeListener<K extends keyof NotificationEventsMap>(
-    eventName: K,
-    listener: NotificationEventsMap[K]
-  ): void;
+  setWatchedPackages(packages: string[]): void;
+  getPending(): Promise<PendingNotification[]>;
+  ack(ids: string[]): Promise<boolean>;
+  clearPending(): Promise<boolean>;
 }
 
 // The native module — only available on Android
@@ -50,34 +41,38 @@ export function openNotificationSettings(): void {
 }
 
 /**
- * Start listening for notifications (register the callback bridge).
+ * Tell the listener service which app packages to capture. Everything else is
+ * discarded on arrival, so this must be called whenever wallets change.
  */
-export function startListening(): void {
+export function setWatchedPackages(packages: string[]): void {
   if (!NotificationListenerModule) return;
-  NotificationListenerModule.startListening();
+  NotificationListenerModule.setWatchedPackages(packages);
 }
 
 /**
- * Stop listening for notifications.
+ * Notifications captured since the last ack, oldest first.
  */
-export function stopListening(): void {
-  if (!NotificationListenerModule) return;
-  NotificationListenerModule.stopListening();
+export async function getPendingNotifications(): Promise<PendingNotification[]> {
+  if (!NotificationListenerModule) return [];
+  return await NotificationListenerModule.getPending();
 }
 
 /**
- * Subscribe to incoming notification events.
- * Returns an unsubscribe function.
+ * Drop captured notifications once they have been applied. Separate from the
+ * read so an interrupted scan leaves the queue for the next attempt.
  */
-export function addNotificationListener(
-  callback: (event: NotificationReceivedEvent) => void
-): (() => void) | null {
-  if (!NotificationListenerModule) return null;
-  const subscription = NotificationListenerModule.addListener(
-    'onNotificationReceived',
-    callback
-  );
-  return () => subscription.remove();
+export async function ackNotifications(ids: string[]): Promise<void> {
+  if (!NotificationListenerModule || ids.length === 0) return;
+  await NotificationListenerModule.ack(ids);
+}
+
+/**
+ * Discard everything queued — used when resetting, so a fresh baseline
+ * doesn't replay old alerts against a newly set balance.
+ */
+export async function clearPendingNotifications(): Promise<void> {
+  if (!NotificationListenerModule) return;
+  await NotificationListenerModule.clearPending();
 }
 
 /**

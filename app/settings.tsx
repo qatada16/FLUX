@@ -12,10 +12,8 @@ import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
 import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
 import { checkNotificationPermission, openNotificationSettings, isAvailable as notifAvailable } from '../modules/notification-listener';
-import { startForegroundService } from '../modules/foreground-service';
-import { initSmsListener } from '../src/lib/smsHandler';
-import { initNotificationListener } from '../src/lib/notificationHandler';
-import { requestBatteryOptimizationExclusion } from '../src/lib/battery';
+import { runCatchUpScan } from '../src/lib/scanner';
+import { REFRESH_WINDOW_OPTIONS, type RefreshWindowDays } from '../src/store/settingsStore';
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
@@ -43,6 +41,90 @@ export default function SettingsScreen() {
   const wallets = useWalletStore((s) => s.wallets);
   const user = useAuthStore((s) => s.user);
   const signOut = useAuthStore((s) => s.signOut);
+
+  const refreshWindowDays = useSettingsStore((s) => s.refreshWindowDays);
+  const setRefreshWindowDays = useSettingsStore((s) => s.setRefreshWindowDays);
+  const lastScanAt = useSettingsStore((s) => s.lastScanAt);
+  const [scanning, setScanning] = useState(false);
+
+  const lastScanLabel = (() => {
+    if (!lastScanAt) return 'Not checked yet';
+    const mins = Math.floor((Date.now() - lastScanAt) / 60000);
+    if (mins < 1) return 'Checked just now';
+    if (mins < 60) return `Checked ${mins} min ago`;
+    const hrs = Math.floor(mins / 60);
+    if (hrs < 24) return `Checked ${hrs} hour${hrs === 1 ? '' : 's'} ago`;
+    const days = Math.floor(hrs / 24);
+    return `Checked ${days} day${days === 1 ? '' : 's'} ago`;
+  })();
+
+  const chooseRefreshWindow = () => {
+    showAppModal({
+      title: 'Catch-up Window',
+      message:
+        'How far back Flux looks when it checks for missed transactions.' +
+        '\n\n' +
+        'A longer window only matters if the app has not been opened for a while — ' +
+        'messages already applied are never counted twice.',
+      buttons: [
+        ...REFRESH_WINDOW_OPTIONS.map((days) => ({
+          text: `${days === refreshWindowDays ? '✓  ' : ''}Last ${days} days`,
+          style: 'default' as const,
+          onPress: () => {
+            setRefreshWindowDays(days as RefreshWindowDays);
+            void Haptics.selectionAsync();
+          },
+        })),
+        { text: 'Cancel', style: 'cancel' as const },
+      ],
+    });
+  };
+
+  const handleScanNow = async () => {
+    if (scanning) return;
+    setScanning(true);
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    const result = await runCatchUpScan('manual');
+    setScanning(false);
+
+    if (result.skipped === 'no-wallets') {
+      showAppModal({
+        title: 'Nothing to check',
+        message: 'No wallet is set to SMS or notification tracking.',
+      });
+      return;
+    }
+    if (result.skipped === 'no-permission') {
+      showAppModal({
+        title: 'Access needed',
+        message: 'Grant SMS or notification access below so Flux can read transaction alerts.',
+      });
+      return;
+    }
+    if (result.skipped === 'baseline') {
+      showAppModal({
+        title: 'Tracking started',
+        message:
+          'Flux noted your current balances as the starting point. From now on it will apply ' +
+          'transactions that arrive after this moment.',
+      });
+      return;
+    }
+    if (result.skipped) {
+      showAppModal({ title: 'Not available', message: 'Automatic tracking needs an Android device.' });
+      return;
+    }
+
+    const read = result.smsScanned + result.notificationsScanned;
+    const applied = result.smsApplied + result.notificationsApplied;
+    showAppModal({
+      title: applied > 0 ? 'Balances updated' : 'Already up to date',
+      message:
+        `Checked the last ${result.windowDays} days.\n\n` +
+        `${read} new message${read === 1 ? '' : 's'} read\n` +
+        `${applied} balance update${applied === 1 ? '' : 's'} applied`,
+    });
+  };
 
   const handleSync = async () => {
     if (!user) {
@@ -164,7 +246,46 @@ export default function SettingsScreen() {
         </Pressable>
       </View>
 
-      {/* Permissions section (placeholder for Phase 5-6) */}
+      {/* Automatic tracking */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>AUTOMATIC TRACKING</Text>
+        <Pressable
+          onPress={chooseRefreshWindow}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Catch-up Window</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              How far back to look for missed transactions
+            </Text>
+          </View>
+          <Text style={[styles.rowValue, { color: theme.accentPrimary }]}>
+            {refreshWindowDays} days
+          </Text>
+        </Pressable>
+        <Pressable
+          onPress={handleScanNow}
+          disabled={scanning}
+          style={[
+            styles.row,
+            { backgroundColor: theme.surface, borderColor: theme.border, opacity: scanning ? 0.5 : 1 },
+          ]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>
+              {scanning ? 'Checking…' : 'Check Now'}
+            </Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>{lastScanLabel}</Text>
+          </View>
+          <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>↻</Text>
+        </Pressable>
+        <Text style={[styles.sectionFootnote, { color: theme.textSecondary }]}>
+          Flux does not run in the background. It checks for new transactions when you open the
+          app, when you pull down to refresh, and about once a day.
+        </Text>
+      </View>
+
+      {/* Permissions section */}
       <View style={styles.section}>
         <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>PERMISSIONS</Text>
         <Pressable
@@ -183,9 +304,12 @@ export default function SettingsScreen() {
               const granted = await checkSmsPermission();
               setSmsGranted(granted);
               if (granted) {
-                initSmsListener();
-                startForegroundService();
-                showAppModal({ title: 'SMS Access Granted', message: 'Flux will now read incoming SMS to update balances.' });
+                void runCatchUpScan('manual');
+                showAppModal({
+                  title: 'SMS Access Granted',
+                  message:
+                    'Flux will read your SMS inbox for transaction alerts when you open or refresh the app.',
+                });
               }
             }, 1000);
           }}
@@ -194,7 +318,7 @@ export default function SettingsScreen() {
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>SMS Access</Text>
             <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
-              {smsGranted ? 'Granted — listening for SMS' : 'Tap to request permission'}
+              {smsGranted ? 'Granted — inbox is read on refresh' : 'Tap to request permission'}
             </Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: smsGranted ? theme.success : theme.warning }]} />
@@ -224,10 +348,7 @@ export default function SettingsScreen() {
                     setTimeout(() => {
                       checkNotificationPermission().then((granted) => {
                         setNotifGranted(granted);
-                        if (granted) {
-                          initNotificationListener();
-                          startForegroundService();
-                        }
+                        if (granted) void runCatchUpScan('manual');
                       });
                     }, 3000);
                   },
@@ -241,26 +362,12 @@ export default function SettingsScreen() {
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Notification Access</Text>
             <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
               {notifGranted
-                ? 'Granted — listening for notifications'
+                ? 'Granted — alerts are captured for the next check'
                 : 'Tap to open settings (manual toggle required)'}
             </Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: notifGranted ? theme.success : theme.warning }]} />
         </Pressable>
-        {Platform.OS === 'android' && (
-          <Pressable
-            onPress={requestBatteryOptimizationExclusion}
-            style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
-          >
-            <View style={{ flex: 1 }}>
-              <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Battery Optimization</Text>
-              <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
-                Tap to exclude Flux from battery restrictions
-              </Text>
-            </View>
-            <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>→</Text>
-          </Pressable>
-        )}
       </View>
 
       {/* Appearance */}
@@ -343,6 +450,13 @@ const styles = StyleSheet.create({
     fontSize: 12,
     letterSpacing: 1,
     marginBottom: 12,
+  },
+  sectionFootnote: {
+    fontFamily: 'Sora_400Regular',
+    fontSize: 12,
+    lineHeight: 17,
+    marginTop: 10,
+    paddingHorizontal: 4,
   },
   row: {
     flexDirection: 'row',

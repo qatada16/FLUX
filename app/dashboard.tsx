@@ -1,4 +1,4 @@
-import React, { useState, useCallback, useEffect, useRef } from 'react';
+import React, { useState, useCallback, useEffect } from 'react';
 import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
@@ -9,11 +9,11 @@ import { useTheme } from '../src/theme';
 import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pullWalletsFromCloud, flushPendingSync } from '../src/lib/sync';
+import { runCatchUpScan } from '../src/lib/scanner';
 import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
 import { EmptyState } from '../src/components/EmptyState';
 import { ErrorBanner } from '../src/components/ErrorBanner';
-import { maybeShowBatteryPrompt } from '../src/lib/battery';
 import { getProviderColor } from '../src/constants/providers';
 
 export default function DashboardScreen() {
@@ -23,7 +23,6 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [highlightedWalletId, setHighlightedWalletId] = useState<string | null>(null);
-  const batteryPromptShown = useRef(false);
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
 
@@ -37,25 +36,12 @@ export default function DashboardScreen() {
     }
   }, []); // Run once on mount
 
-  // Show battery optimization prompt once if there are SMS/notification wallets
-  useEffect(() => {
-    if (batteryPromptShown.current) return;
-    if (Platform.OS !== 'android') return;
-    const hasAutoTracking = wallets.some(
-      (w) => w.trackingMethod === 'sms' || w.trackingMethod === 'notification'
-    );
-    if (hasAutoTracking) {
-      // Guard against firing twice within one session; maybeShowBatteryPrompt
-      // additionally self-gates by persisted count + current permission state.
-      batteryPromptShown.current = true;
-      const t = setTimeout(() => void maybeShowBatteryPrompt(), 2000);
-      return () => clearTimeout(t);
-    }
-  }, [wallets]);
-
   const onRefresh = useCallback(async () => {
     setRefreshing(true);
     setSyncError(null);
+    // Pull-to-refresh is a catch-up scan first: read the SMS inbox and any
+    // captured notifications, then reconcile with the cloud.
+    await runCatchUpScan('manual');
     const user = useAuthStore.getState().user;
     if (user) {
       // Push local changes first so the pull can't clobber newer local data.

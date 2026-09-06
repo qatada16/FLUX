@@ -1,9 +1,3 @@
-import {
-  addNotificationListener,
-  startListening,
-  isAvailable,
-} from '../../modules/notification-listener';
-import type { NotificationReceivedEvent } from '../../modules/notification-listener';
 import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
 import { useAiQueueStore } from '../store/aiQueueStore';
@@ -15,56 +9,25 @@ import { containsPossibleAmount } from './aiPrefilter';
 import { notifyTransaction } from './notify';
 import { AI_PROVIDER_LABELS } from '../store/aiKeysStore';
 
-let unsubscribe: (() => void) | null = null;
-
-const DEDUP_WINDOW_MS = 5 * 60 * 1000;
-const MAX_DEDUP_ENTRIES = 100;
-const recentNotifications = new Map<string, number>();
-
-function isDuplicateNotification(event: NotificationReceivedEvent): boolean {
-  const key = `${event.packageName}|${event.title}|${event.text}`;
-  const now = Date.now();
-
-  const seenAt = recentNotifications.get(key);
-  if (seenAt !== undefined && now - seenAt < DEDUP_WINDOW_MS) {
-    return true;
-  }
-
-  recentNotifications.set(key, now);
-  if (recentNotifications.size > MAX_DEDUP_ENTRIES) {
-    for (const [k, t] of recentNotifications) {
-      if (now - t >= DEDUP_WINDOW_MS) recentNotifications.delete(k);
-    }
-    while (recentNotifications.size > MAX_DEDUP_ENTRIES) {
-      const oldest = recentNotifications.keys().next().value;
-      if (oldest === undefined) break;
-      recentNotifications.delete(oldest);
-    }
-  }
-  return false;
+// One notification drained from the native capture queue.
+export interface CapturedNotification {
+  packageName: string;
+  title: string;
+  text: string;
+  timestamp: number;
 }
 
-export function initNotificationListener(): void {
-  if (!isAvailable) return;
-  if (unsubscribe) return;
-
-  startListening();
-
-  unsubscribe = addNotificationListener((event: NotificationReceivedEvent) => {
-    void handleIncomingNotification(event);
-  });
-}
-
-export function teardownNotificationListener(): void {
-  if (unsubscribe) {
-    unsubscribe();
-    unsubscribe = null;
-  }
-}
-
-async function handleIncomingNotification(event: NotificationReceivedEvent): Promise<void> {
-  if (isDuplicateNotification(event)) return;
-
+/**
+ * Applies one captured notification to every wallet watching that package.
+ * Called only by the catch-up scanner, which handles de-duplication before
+ * anything reaches here.
+ *
+ * Returns true when at least one wallet balance moved.
+ */
+export async function applyNotificationToWallets(
+  event: CapturedNotification,
+  options: { notify: boolean }
+): Promise<boolean> {
   const wallets = useWalletStore.getState().wallets;
 
   const matchingWallets = wallets.filter(
@@ -74,7 +37,9 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
       w.notificationPackage === event.packageName
   );
 
-  if (matchingWallets.length === 0) return;
+  if (matchingWallets.length === 0) return false;
+
+  let applied = false;
 
   const fullText = [event.title, event.text].filter(Boolean).join(' ');
 
@@ -100,7 +65,7 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
           providerKey: wallet.providerKey,
           source: 'notification',
           body: fullText,
-          timestamp: Date.now(),
+          timestamp: event.timestamp,
         });
         continue;
       }
@@ -142,18 +107,24 @@ async function handleIncomingNotification(event: NotificationReceivedEvent): Pro
         balanceAfter: newBalance,
         source: isAiParsed ? 'ai_notification' : 'notification',
       });
-      void notifyTransaction({
-        walletName: wallet.displayName,
-        amount: result.amount,
-        direction: result.direction,
-        balanceAfter: newBalance,
-        aiProvider,
-      });
+      if (options.notify) {
+        void notifyTransaction({
+          walletName: wallet.displayName,
+          amount: result.amount,
+          direction: result.direction,
+          balanceAfter: newBalance,
+          aiProvider,
+        });
+      }
     }
+
+    applied = true;
 
     const user = useAuthStore.getState().user;
     if (user) {
       void pushBalanceUpdate(wallet.id, newBalance);
     }
   }
+
+  return applied;
 }

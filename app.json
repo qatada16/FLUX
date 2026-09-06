@@ -20,10 +20,8 @@
       },
       "package": "com.flux.app",
       "permissions": [
-        "android.permission.RECEIVE_SMS",
         "android.permission.READ_SMS",
-        "android.permission.POST_NOTIFICATIONS",
-        "android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"
+        "android.permission.POST_NOTIFICATIONS"
       ]
     },
     "web": {
@@ -39,7 +37,8 @@
           "resizeMode": "contain",
           "backgroundColor": "#0B0E14"
         }
-      ]
+      ],
+      "expo-background-task"
     ],
     "extra": {
       "router": {},

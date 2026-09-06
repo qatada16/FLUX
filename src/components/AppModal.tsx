@@ -18,7 +18,7 @@ export interface AppModalOptions {
 
 // --- Imperative bridge -------------------------------------------------------
 // showAppModal() can be called from anywhere (even non-React code like
-// battery.ts / store actions), mirroring the ergonomics of Alert.alert but
+// lib helpers / store actions), mirroring the ergonomics of Alert.alert but
 // rendering with our theme. A single <AppModalHost/> mounted at the root
 // listens for these calls.
 

@@ -3,7 +3,6 @@ package expo.modules.notificationlistener
 import android.content.ComponentName
 import android.content.Intent
 import android.provider.Settings
-import android.text.TextUtils
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
 
@@ -11,8 +10,6 @@ class NotificationListenerModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("NotificationListener")
-
-    Events("onNotificationReceived")
 
     // Check if notification listener access is enabled for this app
     AsyncFunction("checkPermission") {
@@ -40,25 +37,32 @@ class NotificationListenerModule : Module() {
       }
     }
 
-    // Register the static callback so the service can forward events to JS
-    Function("startListening") {
-      FluxNotificationListenerService.onNotificationCallback = { packageName, title, text, timestamp ->
-        sendEvent("onNotificationReceived", mapOf(
-          "packageName" to packageName,
-          "title" to title,
-          "text" to text,
-          "timestamp" to timestamp
-        ))
-      }
+    // The packages worth capturing. The service drops everything else on
+    // arrival, so this must be kept in step with the user's wallets.
+    Function("setWatchedPackages") { packages: List<String> ->
+      val context = appContext.reactContext ?: return@Function
+      NotificationBuffer.setWatchedPackages(context, packages)
     }
 
-    // Unregister the callback
-    Function("stopListening") {
-      FluxNotificationListenerService.onNotificationCallback = null
+    // Notifications captured while the app was closed, oldest first.
+    AsyncFunction("getPending") {
+      val context = appContext.reactContext
+        ?: return@AsyncFunction emptyList<Map<String, Any>>()
+      NotificationBuffer.getPending(context)
     }
 
-    OnDestroy {
-      FluxNotificationListenerService.onNotificationCallback = null
+    // Drop entries once JS has applied them. Kept separate from getPending so
+    // a crash mid-apply leaves the queue intact for the next scan.
+    AsyncFunction("ack") { ids: List<String> ->
+      val context = appContext.reactContext ?: return@AsyncFunction false
+      NotificationBuffer.ack(context, ids)
+      true
+    }
+
+    AsyncFunction("clearPending") {
+      val context = appContext.reactContext ?: return@AsyncFunction false
+      NotificationBuffer.clear(context)
+      true
     }
   }
 }

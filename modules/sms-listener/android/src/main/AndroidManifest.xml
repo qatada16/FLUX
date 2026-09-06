@@ -1,4 +1,5 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
-  <uses-permission android:name="android.permission.RECEIVE_SMS" />
+  <!-- READ_SMS only: balances are recovered by scanning the system inbox on
+       demand, so we never need RECEIVE_SMS (a live broadcast) at all. -->
   <uses-permission android:name="android.permission.READ_SMS" />
 </manifest>

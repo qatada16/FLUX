@@ -10,13 +10,9 @@ import { useSettingsStore } from '../src/store/settingsStore';
 import { useAuthStore } from '../src/store/authStore';
 import { flushPendingSync } from '../src/lib/sync';
 import { initNotifications } from '../src/lib/notify';
-import { initSmsListener, reconcileSms } from '../src/lib/smsHandler';
-import { initNotificationListener } from '../src/lib/notificationHandler';
-import { checkSmsPermission } from '../modules/sms-listener';
-import { checkNotificationPermission } from '../modules/notification-listener';
-import { startForegroundService } from '../modules/foreground-service';
-
-import { processPendingAiQueue } from '../src/lib/aiParser';
+import { runCatchUpScan, syncWatchedPackages } from '../src/lib/scanner';
+import { registerDailyScan } from '../src/lib/backgroundScan';
+import { useWalletStore } from '../src/store/walletStore';
 
 SplashScreen.preventAutoHideAsync();
 
@@ -31,36 +27,31 @@ export default function RootLayout() {
     Sora_700Bold,
   });
 
-  // Initialize native listeners if permissions are already granted
+  // Nothing listens in the background any more. On launch we register the
+  // once-a-day scan with Android and catch up on whatever arrived while the
+  // app was closed.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     void initNotifications();
-    void (async () => {
-      const [sms, notif] = await Promise.all([
-        checkSmsPermission(),
-        checkNotificationPermission(),
-      ]);
-      if (sms) initSmsListener();
-      if (notif) initNotificationListener();
-      // Keep the process alive so those listeners keep firing — and alerts keep
-      // arriving — once the app is closed.
-      if (sms || notif) startForegroundService();
-    })();
+    void registerDailyScan();
+    void runCatchUpScan('launch');
   }, []);
 
-  // Every time the app comes to the foreground:
-  //  1. Reconcile the SMS inbox — recovers transaction SMS that arrived while
-  //     the app was backgrounded/killed or the device was offline (the live
-  //     listener may have missed them, but they're in the system inbox).
-  //  2. Flush pending cloud sync — pushes balance changes and wallet deletions
-  //     that happened while offline, now that we may have connectivity again.
-  //  3. Process pending AI queue — parses offline SMS/notifications.
+  // Keep the notification listener's package filter in step with the wallets,
+  // so the service captures exactly what is being tracked and nothing else.
+  useEffect(() => {
+    if (Platform.OS !== 'android') return;
+    syncWatchedPackages();
+    return useWalletStore.subscribe(syncWatchedPackages);
+  }, []);
+
+  // Coming back to the foreground is the main catch-up point: scan the inbox
+  // and the captured notifications, then flush anything queued for the cloud.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
-        void reconcileSms();
-        void processPendingAiQueue();
+        void runCatchUpScan('foreground');
         const user = useAuthStore.getState().user;
         if (user) void flushPendingSync(user.id);
       }
