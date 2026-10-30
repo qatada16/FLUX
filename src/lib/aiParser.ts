@@ -1,18 +1,27 @@
 import type { ParseResult } from './parsers/types';
-import { useAiQueueStore } from '../store/aiQueueStore';
-import { useWalletStore } from '../store/walletStore';
 import { useAuthStore } from '../store/authStore';
 import {
   useAiKeysStore,
   getUsableKeys,
   AI_PROVIDERS,
-  AI_PROVIDER_LABELS,
   type AiProvider,
 } from '../store/aiKeysStore';
 import { containsPossibleAmount } from './aiPrefilter';
-import { pushBalanceUpdate } from './sync';
-import { recordTransaction } from './transactionSync';
-import { notifyTransaction } from './notify';
+
+// Per-provider request budget. Scans wait on these calls, so an unanswered
+// request must fail over to the next provider (or the retry queue) rather
+// than hold the scan open indefinitely.
+const AI_TIMEOUT_MS = 15_000;
+
+async function fetchWithTimeout(url: string, init: RequestInit): Promise<Response> {
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), AI_TIMEOUT_MS);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } finally {
+    clearTimeout(timer);
+  }
+}
 
 const SYSTEM_PROMPT = `You are a financial transaction parser for bank and mobile wallet SMS/notifications in Pakistan.
 Analyze the message and extract the transaction amount and new/available account balance.
@@ -45,7 +54,7 @@ async function chatCompletion(
   text: string,
   label: string
 ): Promise<string> {
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
     body: JSON.stringify({
@@ -65,7 +74,7 @@ async function chatCompletion(
 
 async function callGemini(key: string, text: string): Promise<string> {
   const url = `https://generativelanguage.googleapis.com/v1beta/models/gemini-2.5-flash:generateContent?key=${key}`;
-  const res = await fetch(url, {
+  const res = await fetchWithTimeout(url, {
     method: 'POST',
     headers: { 'Content-Type': 'application/json' },
     body: JSON.stringify({
@@ -199,74 +208,4 @@ export async function parseMessageWithAi(text: string): Promise<AiParseOutcome |
   // instead of silently discarding the message.
   if (attempted && lastError) throw lastError;
   return null;
-}
-
-let isProcessingQueue = false;
-
-export async function processPendingAiQueue(): Promise<void> {
-  if (isProcessingQueue) return;
-  if (!hasAiKeys()) return;
-  isProcessingQueue = true;
-
-  try {
-    const queueStore = useAiQueueStore.getState();
-    const pending = [...queueStore.pendingMessages];
-    if (pending.length === 0) return;
-
-    for (const item of pending) {
-      try {
-        const outcome = await parseMessageWithAi(item.body);
-        if (outcome) {
-          const result = outcome.result;
-          const wallet = useWalletStore
-            .getState()
-            .wallets.find((w) => w.id === item.walletId);
-
-          if (wallet) {
-            if ((!result.amount || result.amount === 0) && result.newBalance !== undefined) {
-              const delta = result.newBalance - wallet.balance;
-              if (delta !== 0) {
-                result.amount = Math.abs(delta);
-                result.direction = delta > 0 ? 'credit' : 'debit';
-              }
-            }
-
-            const newBalance =
-              result.newBalance ??
-              (result.direction === 'credit'
-                ? wallet.balance + result.amount
-                : wallet.balance - result.amount);
-
-            useWalletStore.getState().updateBalance(wallet.id, newBalance);
-
-            if (result.amount > 0) {
-              recordTransaction({
-                walletId: wallet.id,
-                walletName: wallet.displayName,
-                amount: result.amount,
-                direction: result.direction,
-                balanceAfter: newBalance,
-                source: item.source === 'sms' ? 'ai_sms' : 'ai_notification',
-              });
-              void notifyTransaction({
-                walletName: wallet.displayName,
-                amount: result.amount,
-                direction: result.direction,
-                balanceAfter: newBalance,
-                aiProvider: AI_PROVIDER_LABELS[outcome.provider],
-              });
-            }
-
-            const user = useAuthStore.getState().user;
-            if (user) void pushBalanceUpdate(wallet.id, newBalance);
-          }
-        }
-        queueStore.dequeueMessage(item.id);
-      } catch {
-        break;
-      }
-    }
-  } finally {
-    isProcessingQueue = false;
-  }
 }

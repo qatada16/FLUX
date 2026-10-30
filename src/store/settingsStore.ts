@@ -4,17 +4,14 @@ import AsyncStorage from '@react-native-async-storage/async-storage';
 
 type ThemeMode = 'dark' | 'light';
 
-// How far back a catch-up scan is willing to look. This is a ceiling, not a
-// replay instruction: messages already applied are never applied twice, so a
-// wider window only helps when the app hasn't been opened for a while.
+// How far back every scan reads. Messages already applied — or older than the
+// balance a wallet started from — are never applied again, so a wider window
+// only finds more when something was genuinely missed. The largest option
+// must not exceed MAX_WINDOW_DAYS in scanWindow.ts.
 export const REFRESH_WINDOW_OPTIONS = [7, 15, 30, 60, 90] as const;
 export type RefreshWindowDays = (typeof REFRESH_WINDOW_OPTIONS)[number];
 
 export const DEFAULT_REFRESH_WINDOW_DAYS: RefreshWindowDays = 7;
-
-// Unattended scans run about once a day via WorkManager; the app also scans
-// whenever it is opened or pulled to refresh.
-export const AUTO_SCAN_INTERVAL_MS = 24 * 60 * 60 * 1000;
 
 interface SettingsState {
   themeMode: ThemeMode;

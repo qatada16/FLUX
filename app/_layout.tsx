@@ -6,12 +6,14 @@ import { useFonts, Sora_400Regular, Sora_500Medium, Sora_600SemiBold, Sora_700Bo
 import * as SplashScreen from 'expo-splash-screen';
 import { ThemeContext, darkTheme, lightTheme } from '../src/theme';
 import { AppModalHost } from '../src/components/AppModal';
+import { UpdatePrompt } from '../src/components/UpdatePrompt';
 import { useSettingsStore } from '../src/store/settingsStore';
 import { useAuthStore } from '../src/store/authStore';
 import { flushPendingSync } from '../src/lib/sync';
 import { initNotifications } from '../src/lib/notify';
 import { runCatchUpScan, syncWatchedPackages } from '../src/lib/scanner';
-import { registerDailyScan } from '../src/lib/backgroundScan';
+import { registerBackgroundScan } from '../src/lib/backgroundScan';
+import { startLiveWatch } from '../src/lib/liveWatch';
 import { useWalletStore } from '../src/store/walletStore';
 
 SplashScreen.preventAutoHideAsync();
@@ -27,13 +29,14 @@ export default function RootLayout() {
     Sora_700Bold,
   });
 
-  // Nothing listens in the background any more. On launch we register the
-  // once-a-day scan with Android and catch up on whatever arrived while the
-  // app was closed.
+  // On launch: register the periodic background check with Android, catch up
+  // on whatever arrived while the app was closed, and apply new SMS and
+  // wallet notifications as they arrive for as long as the process lives.
   useEffect(() => {
     if (Platform.OS !== 'android') return;
     void initNotifications();
-    void registerDailyScan();
+    void registerBackgroundScan();
+    startLiveWatch();
     void runCatchUpScan('launch');
   }, []);
 
@@ -51,6 +54,8 @@ export default function RootLayout() {
     if (Platform.OS !== 'android') return;
     const sub = AppState.addEventListener('change', (state) => {
       if (state === 'active') {
+        // SMS access may have been granted in system settings meanwhile.
+        startLiveWatch();
         void runCatchUpScan('foreground');
         const user = useAuthStore.getState().user;
         if (user) void flushPendingSync(user.id);
@@ -79,6 +84,7 @@ export default function RootLayout() {
               }}
             />
             <AppModalHost />
+            <UpdatePrompt />
           </>
         )}
       </View>

@@ -30,6 +30,14 @@ object NotificationBuffer {
 
   private val lock = Any()
 
+  /**
+   * Set by the Expo module while the JS runtime is alive, so a capture can be
+   * applied immediately instead of waiting for the next scan. Null whenever
+   * the service runs without the app (the usual case) — the queue covers that.
+   */
+  @Volatile
+  var onCaptured: (() -> Unit)? = null
+
   private fun prefs(context: Context) =
     context.getSharedPreferences(PREFS, Context.MODE_PRIVATE)
 
@@ -77,6 +85,12 @@ object NotificationBuffer {
       arr.put(entry)
 
       p.edit().putString(KEY_QUEUE, prune(arr).toString()).commit()
+    }
+    // Outside the lock: the callback crosses into the JS bridge.
+    try {
+      onCaptured?.invoke()
+    } catch (e: Exception) {
+      // The queue already holds the entry; the next scan picks it up.
     }
   }
 

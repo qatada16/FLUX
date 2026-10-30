@@ -33,28 +33,37 @@ interface AuthState {
   signOut: () => Promise<void>;
 }
 
+// Shared by every caller: the boot screen and the headless background scan
+// both need the session, and the auth listener must only be attached once.
+let initializing: Promise<void> | null = null;
+
 export const useAuthStore = create<AuthState>((set, get) => ({
   session: null,
   user: null,
   loading: false,
   initialized: false,
 
-  initialize: async () => {
-    try {
-      const { data: { session } } = await supabase.auth.getSession();
-      set({
-        session,
-        user: session?.user ?? null,
-        initialized: true,
-      });
+  initialize: () => {
+    if (!initializing) {
+      initializing = (async () => {
+        try {
+          const { data: { session } } = await supabase.auth.getSession();
+          set({
+            session,
+            user: session?.user ?? null,
+            initialized: true,
+          });
 
-      // Listen for auth changes
-      supabase.auth.onAuthStateChange((_event, session) => {
-        set({ session, user: session?.user ?? null });
-      });
-    } catch {
-      set({ initialized: true });
+          // Listen for auth changes
+          supabase.auth.onAuthStateChange((_event, session) => {
+            set({ session, user: session?.user ?? null });
+          });
+        } catch {
+          set({ initialized: true });
+        }
+      })();
     }
+    return initializing;
   },
 
   signUp: async (email, password) => {

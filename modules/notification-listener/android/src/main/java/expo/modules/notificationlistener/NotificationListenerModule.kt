@@ -11,6 +11,20 @@ class NotificationListenerModule : Module() {
   override fun definition() = ModuleDefinition {
     Name("NotificationListener")
 
+    // Fired when the listener service queues a tracked notification while the
+    // JS runtime is alive, so it can be applied without waiting for a scan.
+    Events("onNotificationCaptured")
+
+    OnCreate {
+      NotificationBuffer.onCaptured = {
+        sendEvent("onNotificationCaptured", mapOf<String, Any?>())
+      }
+    }
+
+    OnDestroy {
+      NotificationBuffer.onCaptured = null
+    }
+
     // Check if notification listener access is enabled for this app
     AsyncFunction("checkPermission") {
       val context = appContext.reactContext ?: return@AsyncFunction false

@@ -18,6 +18,8 @@ import { useWalletStore } from '../../src/store/walletStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { pushBalanceUpdate, deleteWalletFromCloud, pushAllWalletsToCloud } from '../../src/lib/sync';
 import { recordTransaction } from '../../src/lib/transactionSync';
+import { runCatchUpScan } from '../../src/lib/scanner';
+import { checkTrackingAccess, requestNotificationAccess, requestSmsAccess } from '../../src/lib/permissions';
 import { notifyTransaction } from '../../src/lib/notify';
 import { ProviderIcon } from '../../src/components/ProviderIcon';
 import type { TrackingMethod } from '../../src/types/wallet';
@@ -52,7 +54,7 @@ export default function WalletDetailScreen() {
   const { id } = useLocalSearchParams<{ id: string }>();
   const wallet = useWalletStore((s) => s.wallets.find((w) => w.id === id));
   const updateWallet = useWalletStore((s) => s.updateWallet);
-  const updateBalance = useWalletStore((s) => s.updateBalance);
+  const setBalanceManually = useWalletStore((s) => s.setBalanceManually);
   const removeWallet = useWalletStore((s) => s.removeWallet);
 
   const [editBalance, setEditBalance] = useState('');
@@ -150,14 +152,42 @@ export default function WalletDetailScreen() {
   };
   const activeMode = modeStyles[balanceMode];
 
+  // A sender typed into the box but never confirmed with "+ Add" still counts —
+  // otherwise Save silently drops it and that shortcode is never read.
+  const sendersToSave = () => {
+    const current = editSender ? editSender.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    const pending = newSmsSender.trim();
+    if (pending && !current.includes(pending)) current.push(pending);
+    return current.join(', ');
+  };
+
   const saveChanges = () => {
     if (!balanceValid) {
       void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
       return;
     }
 
+    const senders = sendersToSave();
+    if (editMethod === 'sms' && !senders) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      showAppModal({
+        title: 'Add a sender ID',
+        message: 'SMS tracking needs at least one sender ID (e.g. 8558) to know which messages to read.',
+      });
+      return;
+    }
+    if (editMethod === 'notification' && !editPackage.trim()) {
+      void Haptics.notificationAsync(Haptics.NotificationFeedbackType.Error);
+      showAppModal({
+        title: 'Add the app package',
+        message: "Notification tracking needs the wallet app's package name (e.g. com.example.app).",
+      });
+      return;
+    }
+
     if (newBalance !== wallet.balance) {
-      updateBalance(wallet.id, newBalance);
+      // Typed in by hand, so it already includes everything received so far.
+      setBalanceManually(wallet.id, newBalance);
       // Record the manual adjustment in history too.
       recordTransaction({
         walletId: wallet.id,
@@ -175,29 +205,46 @@ export default function WalletDetailScreen() {
       });
     }
 
+    const packageName = editPackage.trim();
+    let trackingChanged = false;
     if (editMethod && editMethod !== wallet.trackingMethod) {
       updateWallet(wallet.id, {
         trackingMethod: editMethod,
-        smsSender: editMethod === 'sms' ? editSender : undefined,
-        notificationPackage: editMethod === 'notification' ? editPackage : undefined,
+        smsSender: editMethod === 'sms' ? senders : undefined,
+        notificationPackage: editMethod === 'notification' ? packageName : undefined,
       });
-    } else if (editMethod === 'sms' && editSender !== wallet.smsSender) {
-      updateWallet(wallet.id, { smsSender: editSender });
-    } else if (editMethod === 'notification' && editPackage !== wallet.notificationPackage) {
-      updateWallet(wallet.id, { notificationPackage: editPackage });
+      trackingChanged = true;
+    } else if (editMethod === 'sms' && senders !== (wallet.smsSender ?? '')) {
+      updateWallet(wallet.id, { smsSender: senders });
+      trackingChanged = true;
+    } else if (editMethod === 'notification' && packageName !== (wallet.notificationPackage ?? '')) {
+      updateWallet(wallet.id, { notificationPackage: packageName });
+      trackingChanged = true;
     }
 
     Haptics.notificationAsync(Haptics.NotificationFeedbackType.Success);
     setIsEditing(false);
+    setNewSmsSender('');
 
     // Sync to cloud in background
     const user = useAuthStore.getState().user;
     if (user) {
-      if (newBalance !== wallet.balance) {
-        pushBalanceUpdate(wallet.id, newBalance);
+      if (trackingChanged) {
+        void pushAllWalletsToCloud(user.id);
+      } else if (newBalance !== wallet.balance) {
+        void pushBalanceUpdate(wallet.id, newBalance);
       }
-      if (editMethod && editMethod !== wallet.trackingMethod) {
-        pushAllWalletsToCloud(user.id);
+    }
+
+    if (trackingChanged) {
+      // Pick up messages from a newly added sender straight away, and make
+      // sure the access the new method depends on is actually granted.
+      void runCatchUpScan('manual');
+      if (editMethod === 'sms') void requestSmsAccess();
+      if (editMethod === 'notification') {
+        void checkTrackingAccess().then((a) => {
+          if (a.notificationsMissing) requestNotificationAccess();
+        });
       }
     }
   };

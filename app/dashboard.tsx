@@ -1,15 +1,21 @@
 import React, { useState, useCallback, useEffect } from 'react';
-import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform } from 'react-native';
+import { View, Text, StyleSheet, ScrollView, RefreshControl, Pressable, Platform, AppState } from 'react-native';
 import Animated, { FadeInDown } from 'react-native-reanimated';
 import { LinearGradient } from 'expo-linear-gradient';
 import { PieChart } from 'react-native-gifted-charts';
-import { router } from 'expo-router';
+import { router, useFocusEffect } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
 import { useWalletStore } from '../src/store/walletStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pullWalletsFromCloud, flushPendingSync } from '../src/lib/sync';
 import { runCatchUpScan } from '../src/lib/scanner';
+import {
+  checkTrackingAccess,
+  requestNotificationAccess,
+  requestSmsAccess,
+  type TrackingAccess,
+} from '../src/lib/permissions';
 import { AnimatedBalance } from '../src/components/AnimatedBalance';
 import { WalletCard } from '../src/components/WalletCard';
 import { EmptyState } from '../src/components/EmptyState';
@@ -23,6 +29,24 @@ export default function DashboardScreen() {
   const [refreshing, setRefreshing] = useState(false);
   const [syncError, setSyncError] = useState<string | null>(null);
   const [highlightedWalletId, setHighlightedWalletId] = useState<string | null>(null);
+  const [access, setAccess] = useState<TrackingAccess>({ smsMissing: false, notificationsMissing: false });
+
+  // Without these, balances silently stop moving — say so where it's seen.
+  const refreshAccess = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    void checkTrackingAccess().then(setAccess);
+  }, []);
+
+  // On focus covers coming back from a wallet's settings; AppState covers
+  // coming back from Android's permission screens.
+  useFocusEffect(refreshAccess);
+
+  useEffect(() => {
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshAccess();
+    });
+    return () => sub.remove();
+  }, [refreshAccess]);
 
   const totalBalance = wallets.reduce((sum, w) => sum + w.balance, 0);
 
@@ -42,6 +66,7 @@ export default function DashboardScreen() {
     // Pull-to-refresh is a catch-up scan first: read the SMS inbox and any
     // captured notifications, then reconcile with the cloud.
     await runCatchUpScan('manual');
+    refreshAccess();
     const user = useAuthStore.getState().user;
     if (user) {
       // Push local changes first so the pull can't clobber newer local data.
@@ -52,7 +77,12 @@ export default function DashboardScreen() {
       }
     }
     setRefreshing(false);
-  }, []);
+  }, [refreshAccess]);
+
+  const smsWalletNames = wallets.filter((w) => w.trackingMethod === 'sms').map((w) => w.displayName);
+  const notificationWalletNames = wallets
+    .filter((w) => w.trackingMethod === 'notification')
+    .map((w) => w.displayName);
 
   // Donut chart data
   const pieData = wallets
@@ -121,6 +151,30 @@ export default function DashboardScreen() {
           <Text style={[styles.settingsIcon, { color: theme.textSecondary }]}>⚙</Text>
         </Pressable>
       </Animated.View>
+
+      {/* Missing-access banners */}
+      {access.smsMissing && (
+        <Pressable
+          onPress={() => void requestSmsAccess().then(refreshAccess)}
+          style={[styles.accessBanner, { backgroundColor: theme.warning + '18', borderColor: theme.warning + '50' }]}
+        >
+          <Text style={[styles.accessTitle, { color: theme.warning }]}>SMS access is off</Text>
+          <Text style={[styles.accessText, { color: theme.textSecondary }]}>
+            {smsWalletNames.join(', ')} can't update from SMS. Tap to allow.
+          </Text>
+        </Pressable>
+      )}
+      {access.notificationsMissing && (
+        <Pressable
+          onPress={requestNotificationAccess}
+          style={[styles.accessBanner, { backgroundColor: theme.warning + '18', borderColor: theme.warning + '50' }]}
+        >
+          <Text style={[styles.accessTitle, { color: theme.warning }]}>Notification access is off</Text>
+          <Text style={[styles.accessText, { color: theme.textSecondary }]}>
+            {notificationWalletNames.join(', ')} can't update from app alerts. Tap to enable.
+          </Text>
+        </Pressable>
+      )}
 
       {/* Sync error banner */}
       {syncError && (
@@ -264,6 +318,22 @@ const styles = StyleSheet.create({
   },
   settingsIcon: {
     fontSize: 20,
+  },
+  accessBanner: {
+    borderRadius: 12,
+    borderWidth: 1,
+    padding: 14,
+    marginBottom: 14,
+  },
+  accessTitle: {
+    fontFamily: 'Sora_600SemiBold',
+    fontSize: 13,
+    marginBottom: 2,
+  },
+  accessText: {
+    fontFamily: 'Sora_400Regular',
+    fontSize: 12,
+    lineHeight: 17,
   },
   heroCard: {
     borderRadius: 20,

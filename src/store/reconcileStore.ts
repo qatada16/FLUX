@@ -1,87 +1,90 @@
 import { create } from 'zustand';
 import { persist, createJSONStorage } from 'zustand/middleware';
 import AsyncStorage from '@react-native-async-storage/async-storage';
-
-// How many recently-applied ids we remember per source. The date cursor is the
-// primary guard against re-applying an SMS, so this only has to cover the
-// boundary; for notifications it also covers a scan that died after applying
-// but before the native queue was acked.
-const MAX_PROCESSED_IDS = 1000;
+import { pruneProcessed } from '../lib/scanWindow';
 
 interface ReconcileState {
-  // Once true, we have a baseline cursor and may apply deltas. Before that we
-  // must NOT replay the historical inbox (the user's balance was set at
-  // onboarding and already reflects past transactions).
-  initialized: boolean;
-  // Only inbox messages with date >= smsCursor are considered.
-  smsCursor: number;
-  // Inbox row ids already applied (most recent last).
-  processedSmsIds: string[];
-  // Notification entry ids already applied (most recent last).
-  processedNotificationIds: string[];
+  // walletId → epoch ms. The wallet's balance already accounts for every
+  // message before this moment: set when the wallet is created, when
+  // its balance is set by hand, and whenever a message states the balance.
+  anchors: Record<string, number>;
+  // Message key → message time (epoch ms) for every tracked message already
+  // judged — applied, recognised as not-a-transaction, or handed to the AI
+  // queue. A message with a key here is never applied again.
+  processed: Record<string, number>;
+  // Installs upgraded from the cursor-based scanner: where that cursor stood.
+  // Used once, as the anchor for wallets that predate anchors, then cleared.
+  legacyAnchor: number | null;
 
-  // Establish the baseline so future messages (date >= now) get applied.
-  initCursor: (now: number) => void;
-  // Record a completed SMS pass: advance the cursor, remember applied ids.
-  commitSms: (newCursor: number, appliedIds: string[]) => void;
-  // Record notification ids applied in a pass.
-  commitNotifications: (appliedIds: string[]) => void;
-  // Wipe state (e.g. on sign-out / wallet reset) so a fresh baseline is taken.
+  // Anchors only ever move forward: a stated balance from an older message,
+  // or a clock set back, must never rewind one. The scanner relies on this to
+  // skip re-recording messages it has already found to be older than one.
+  advanceAnchor: (walletId: string, at: number) => void;
+  // Give every listed wallet without an anchor one, from `fallback`.
+  ensureAnchors: (walletIds: string[], fallback: (walletId: string) => number) => void;
+  markProcessed: (entries: Record<string, number>) => void;
+  prune: (now: number) => void;
+  forgetWallet: (walletId: string) => void;
+  // Wipe state (e.g. on "Reset All Data").
   reset: () => void;
 }
-
-const trim = (ids: string[]) =>
-  ids.length > MAX_PROCESSED_IDS ? ids.slice(ids.length - MAX_PROCESSED_IDS) : ids;
 
 export const useReconcileStore = create<ReconcileState>()(
   persist(
     (set) => ({
-      initialized: false,
-      smsCursor: 0,
-      processedSmsIds: [],
-      processedNotificationIds: [],
+      anchors: {},
+      processed: {},
+      legacyAnchor: null,
 
-      initCursor: (now) =>
-        set({
-          initialized: true,
-          smsCursor: now,
-          processedSmsIds: [],
-          processedNotificationIds: [],
+      advanceAnchor: (walletId, at) =>
+        set((state) => {
+          const current = state.anchors[walletId] ?? 0;
+          if (at <= current) return state;
+          return { anchors: { ...state.anchors, [walletId]: at } };
         }),
 
-      commitSms: (newCursor, appliedIds) =>
-        set((state) => ({
-          // Cursor never goes backwards.
-          smsCursor: Math.max(state.smsCursor, newCursor),
-          processedSmsIds: trim([...state.processedSmsIds, ...appliedIds]),
-        })),
-
-      commitNotifications: (appliedIds) =>
-        set((state) => ({
-          processedNotificationIds: trim([
-            ...state.processedNotificationIds,
-            ...appliedIds,
-          ]),
-        })),
-
-      reset: () =>
-        set({
-          initialized: false,
-          smsCursor: 0,
-          processedSmsIds: [],
-          processedNotificationIds: [],
+      ensureAnchors: (walletIds, fallback) =>
+        set((state) => {
+          const missing = walletIds.filter((id) => state.anchors[id] === undefined);
+          if (missing.length === 0 && state.legacyAnchor === null) return state;
+          const anchors = { ...state.anchors };
+          for (const id of missing) anchors[id] = fallback(id);
+          // The legacy cursor only describes wallets that existed at upgrade;
+          // a wallet that turns up later (e.g. a cloud pull) starts fresh.
+          return { anchors, legacyAnchor: null };
         }),
+
+      markProcessed: (entries) =>
+        set((state) => ({ processed: { ...state.processed, ...entries } })),
+
+      prune: (now) => set((state) => ({ processed: pruneProcessed(state.processed, now) })),
+
+      forgetWallet: (walletId) =>
+        set((state) => {
+          if (state.anchors[walletId] === undefined) return state;
+          const anchors = { ...state.anchors };
+          delete anchors[walletId];
+          return { anchors };
+        }),
+
+      reset: () => set({ anchors: {}, processed: {}, legacyAnchor: null }),
     }),
     {
       name: 'flux-reconcile-storage',
       storage: createJSONStorage(() => AsyncStorage),
-      version: 2,
-      migrate: (persisted) => {
-        const s = (persisted ?? {}) as Partial<ReconcileState>;
-        if (!Array.isArray(s.processedNotificationIds)) {
-          s.processedNotificationIds = [];
-        }
-        return s as ReconcileState;
+      version: 3,
+      migrate: (persisted, version) => {
+        if (version >= 3) return persisted as ReconcileState;
+        // v1/v2 tracked a single forward-only SMS cursor. Everything at or
+        // before it was already judged, so just past it is exactly the anchor
+        // existing wallets need. Clamped to now: a cursor pushed into the
+        // future by a mis-dated SMS is the bug this version exists to fix.
+        const old = (persisted ?? {}) as { initialized?: boolean; smsCursor?: number };
+        const legacyAnchor =
+          old.initialized && typeof old.smsCursor === 'number' && old.smsCursor > 0
+            ? Math.min(old.smsCursor + 1, Date.now())
+            : null;
+        return { anchors: {}, processed: {}, legacyAnchor } as unknown as ReconcileState;
       },
     }
   )

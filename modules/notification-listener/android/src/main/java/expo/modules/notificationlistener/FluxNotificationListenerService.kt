@@ -43,7 +43,11 @@ class FluxNotificationListenerService : NotificationListenerService() {
 
     val extras = sbn.notification?.extras ?: return
     val title = extras.getCharSequence("android.title")?.toString() ?: ""
-    val text = extras.getCharSequence("android.text")?.toString() ?: ""
+    // The collapsed text is often truncated before the balance line; the
+    // expanded (BigTextStyle) text carries the whole message when present.
+    val text = extras.getCharSequence("android.bigText")?.toString()?.takeIf { it.isNotBlank() }
+      ?: extras.getCharSequence("android.text")?.toString()
+      ?: ""
     if (title.isBlank() && text.isBlank()) return
 
     try {

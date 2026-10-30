@@ -7,11 +7,14 @@
     "@react-native-async-storage/async-storage": "2.2.0",
     "@supabase/supabase-js": "^2.108.1",
     "expo": "~56.0.12",
+    "expo-application": "~56.0.3",
     "expo-background-task": "~56.0.27",
     "expo-constants": "~56.0.18",
     "expo-dev-client": "~56.0.20",
+    "expo-file-system": "~56.0.11",
     "expo-font": "~56.0.7",
     "expo-haptics": "~56.0.3",
+    "expo-intent-launcher": "~56.0.4",
     "expo-linear-gradient": "~56.0.4",
     "expo-linking": "~56.0.14",
     "expo-notifications": "~56.0.22",
@@ -47,7 +50,11 @@
     "prebuild:clean": "expo prebuild --clean",
     "build:dev": "eas build --profile development --platform android",
     "build:preview": "eas build --profile preview --platform android",
-    "build:prod": "eas build --profile production --platform android"
+    "build:prod": "node scripts/release.mjs",
+    "build:prod:only": "eas build --profile production --platform android",
+    "release": "node scripts/release.mjs",
+    "release:check": "node scripts/release.mjs --check",
+    "typecheck": "tsc --noEmit"
   },
   "private": true
 }

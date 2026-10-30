@@ -12,9 +12,12 @@ interface TransactionState {
   transactions: Transaction[]; // newest first
 
   // Append a transaction (called whenever an SMS/notification changes a
-  // balance). Returns the created record so callers can push it to the cloud.
+  // balance). `occurredAt` is when the message arrived — a catch-up scan can
+  // apply something from days ago. Returns the created record so callers can
+  // push it to the cloud.
   addTransaction: (
-    tx: Omit<Transaction, 'id' | 'createdAt' | 'synced'>
+    tx: Omit<Transaction, 'id' | 'createdAt' | 'synced'>,
+    occurredAt?: number
   ) => Transaction;
   // Mark the given ids as synced to the cloud.
   markSynced: (ids: string[]) => void;
@@ -28,20 +31,23 @@ function trim(list: Transaction[]): Transaction[] {
   return list.length > MAX_TRANSACTIONS ? list.slice(0, MAX_TRANSACTIONS) : list;
 }
 
+const newestFirst = (a: Transaction, b: Transaction) =>
+  new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime();
+
 export const useTransactionStore = create<TransactionState>()(
   persist(
     (set) => ({
       transactions: [],
 
-      addTransaction: (tx) => {
+      addTransaction: (tx, occurredAt) => {
         const record: Transaction = {
           ...tx,
           id: uuidv4(),
-          createdAt: new Date().toISOString(),
+          createdAt: new Date(occurredAt ?? Date.now()).toISOString(),
           synced: false,
         };
         set((state) => ({
-          transactions: trim([record, ...state.transactions]),
+          transactions: trim([record, ...state.transactions].sort(newestFirst)),
         }));
         return record;
       },

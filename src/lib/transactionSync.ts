@@ -13,9 +13,10 @@ import type { Transaction } from '../types/transaction';
  * sync when the network is available.
  */
 export function recordTransaction(
-  tx: Omit<Transaction, 'id' | 'createdAt' | 'synced'>
+  tx: Omit<Transaction, 'id' | 'createdAt' | 'synced'>,
+  occurredAt?: number
 ): void {
-  const record = useTransactionStore.getState().addTransaction(tx);
+  const record = useTransactionStore.getState().addTransaction(tx, occurredAt);
 
   const user = useAuthStore.getState().user;
   if (user && isSupabaseConfigured) {

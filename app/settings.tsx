@@ -1,5 +1,5 @@
-import React, { useState, useEffect } from 'react';
-import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Platform } from 'react-native';
+import React, { useState, useEffect, useCallback } from 'react';
+import { View, Text, StyleSheet, Pressable, ScrollView, Switch, Platform, AppState, Linking } from 'react-native';
 import { router } from 'expo-router';
 import * as Haptics from 'expo-haptics';
 import { useTheme } from '../src/theme';
@@ -10,27 +10,67 @@ import { useTransactionStore } from '../src/store/transactionStore';
 import { useAiKeysStore, AI_PROVIDERS } from '../src/store/aiKeysStore';
 import { useAuthStore } from '../src/store/authStore';
 import { pushAllWalletsToCloud } from '../src/lib/sync';
-import { checkSmsPermission, requestSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
-import { checkNotificationPermission, openNotificationSettings, isAvailable as notifAvailable } from '../modules/notification-listener';
-import { runCatchUpScan } from '../src/lib/scanner';
+import { checkSmsPermission, isAvailable as smsAvailable } from '../modules/sms-listener';
+import { checkNotificationPermission, isAvailable as notifAvailable } from '../modules/notification-listener';
+import { runCatchUpScan, type ScanResult } from '../src/lib/scanner';
+import { requestNotificationAccess, requestSmsAccess } from '../src/lib/permissions';
+import { backgroundScanAvailable, BACKGROUND_INTERVAL_MINUTES } from '../src/lib/backgroundScan';
+import { installedVersion } from '../src/lib/appUpdate';
+import { checkForUpdatesNow } from '../src/components/UpdatePrompt';
 import { REFRESH_WINDOW_OPTIONS, type RefreshWindowDays } from '../src/store/settingsStore';
+
+const plural = (n: number, word: string) => `${n} ${word}${n === 1 ? '' : 's'}`;
+
+function describeScan(result: ScanResult): string {
+  const lines = [`Checked the last ${result.windowDays} days.`, ''];
+  if (result.found === 0) {
+    lines.push("No messages from your wallets' sender IDs or apps were found in this period.");
+  } else {
+    lines.push(`${plural(result.found, 'message')} from your wallets found:`);
+    lines.push(`•  ${plural(result.applied, 'new transaction')} applied`);
+    if (result.alreadyCounted > 0) lines.push(`•  ${result.alreadyCounted} already counted`);
+    if (result.ignored > 0) lines.push(`•  ${result.ignored} not a transaction (OTP, promo…)`);
+    if (result.queued > 0) lines.push(`•  ${result.queued} waiting for AI (offline)`);
+    const perWallet = result.perWallet.filter((w) => w.found > 0);
+    if (perWallet.length > 1) {
+      lines.push('');
+      for (const w of perWallet) {
+        lines.push(`${w.walletName}: ${plural(w.found, 'message')}, ${w.applied} applied`);
+      }
+    }
+  }
+  if (result.smsPermissionMissing) {
+    lines.push('', '⚠ SMS access is off, so SMS wallets were not checked. Enable it under Permissions.');
+  }
+  if (result.notificationAccessMissing) {
+    lines.push('', '⚠ Notification access is off — new wallet-app alerts are not being captured.');
+  }
+  if (result.error) lines.push('', `Something went wrong: ${result.error}`);
+  return lines.join('\n');
+}
 
 export default function SettingsScreen() {
   const { theme } = useTheme();
   const [smsGranted, setSmsGranted] = useState(false);
   const [notifGranted, setNotifGranted] = useState(false);
+  const [backgroundOn, setBackgroundOn] = useState<boolean | null>(null);
 
-  // Check permissions on mount and when returning from settings
-  const checkPermissions = () => {
-    if (Platform.OS === 'android') {
-      if (smsAvailable) checkSmsPermission().then(setSmsGranted);
-      if (notifAvailable) checkNotificationPermission().then(setNotifGranted);
-    }
-  };
+  // Check on mount and whenever the user comes back from system settings —
+  // that's where notification access (and a blocked SMS permission) is granted.
+  const checkPermissions = useCallback(() => {
+    if (Platform.OS !== 'android') return;
+    if (smsAvailable) checkSmsPermission().then(setSmsGranted);
+    if (notifAvailable) checkNotificationPermission().then(setNotifGranted);
+    backgroundScanAvailable().then(setBackgroundOn);
+  }, []);
 
   useEffect(() => {
     checkPermissions();
-  }, []);
+    const sub = AppState.addEventListener('change', (state) => {
+      if (state === 'active') checkPermissions();
+    });
+    return () => sub.remove();
+  }, [checkPermissions]);
   const themeMode = useSettingsStore((s) => s.themeMode);
   const toggleTheme = useSettingsStore((s) => s.toggleTheme);
   const resetOnboarding = useWalletStore((s) => s.resetOnboarding);
@@ -46,6 +86,7 @@ export default function SettingsScreen() {
   const setRefreshWindowDays = useSettingsStore((s) => s.setRefreshWindowDays);
   const lastScanAt = useSettingsStore((s) => s.lastScanAt);
   const [scanning, setScanning] = useState(false);
+  const version = installedVersion();
 
   const lastScanLabel = (() => {
     if (!lastScanAt) return 'Not checked yet';
@@ -62,10 +103,11 @@ export default function SettingsScreen() {
     showAppModal({
       title: 'Catch-up Window',
       message:
-        'How far back Flux looks when it checks for missed transactions.' +
+        'How far back Flux reads your wallet SMS and captured notifications on every check.' +
         '\n\n' +
-        'A longer window only matters if the app has not been opened for a while — ' +
-        'messages already applied are never counted twice.',
+        'A message is never counted twice, and messages older than a balance you entered ' +
+        'yourself are treated as already included — so a longer window only finds ' +
+        'transactions that were genuinely missed.',
       buttons: [
         ...REFRESH_WINDOW_OPTIONS.map((days) => ({
           text: `${days === refreshWindowDays ? '✓  ' : ''}Last ${days} days`,
@@ -86,43 +128,45 @@ export default function SettingsScreen() {
     void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
     const result = await runCatchUpScan('manual');
     setScanning(false);
+    checkPermissions();
 
+    if (result.skipped === 'unavailable') {
+      showAppModal({ title: 'Not available', message: 'Automatic tracking needs an Android device.' });
+      return;
+    }
     if (result.skipped === 'no-wallets') {
       showAppModal({
         title: 'Nothing to check',
-        message: 'No wallet is set to SMS or notification tracking.',
+        message:
+          'No wallet is set up for automatic tracking. Open a wallet, tap Edit, and choose SMS ' +
+          '(with its sender IDs) or Notification.',
       });
       return;
     }
     if (result.skipped === 'no-permission') {
       showAppModal({
-        title: 'Access needed',
-        message: 'Grant SMS or notification access below so Flux can read transaction alerts.',
+        title: 'SMS access needed',
+        message: 'Flux needs SMS access to read your wallet messages.',
+        buttons: [
+          { text: 'Cancel', style: 'cancel' },
+          {
+            text: 'Allow SMS',
+            style: 'default',
+            onPress: () => void requestSmsAccess().then(checkPermissions),
+          },
+        ],
       });
-      return;
-    }
-    if (result.skipped === 'baseline') {
-      showAppModal({
-        title: 'Tracking started',
-        message:
-          'Flux noted your current balances as the starting point. From now on it will apply ' +
-          'transactions that arrive after this moment.',
-      });
-      return;
-    }
-    if (result.skipped) {
-      showAppModal({ title: 'Not available', message: 'Automatic tracking needs an Android device.' });
       return;
     }
 
-    const read = result.smsScanned + result.notificationsScanned;
-    const applied = result.smsApplied + result.notificationsApplied;
+    void Haptics.notificationAsync(
+      result.applied > 0
+        ? Haptics.NotificationFeedbackType.Success
+        : Haptics.NotificationFeedbackType.Warning
+    );
     showAppModal({
-      title: applied > 0 ? 'Balances updated' : 'Already up to date',
-      message:
-        `Checked the last ${result.windowDays} days.\n\n` +
-        `${read} new message${read === 1 ? '' : 's'} read\n` +
-        `${applied} balance update${applied === 1 ? '' : 's'} applied`,
+      title: result.applied > 0 ? 'Balances updated' : 'Already up to date',
+      message: describeScan(result),
     });
   };
 
@@ -279,9 +323,55 @@ export default function SettingsScreen() {
           </View>
           <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>↻</Text>
         </Pressable>
+        <Pressable
+          onPress={() => {
+            const hours = BACKGROUND_INTERVAL_MINUTES / 60;
+            showAppModal(
+              backgroundOn
+                ? {
+                    title: 'Background checks are on',
+                    message:
+                      `Android runs Flux's check roughly every ${hours} hours while the phone is ` +
+                      'online, and Flux sends a notification for every transaction it applies.\n\n' +
+                      'Some phones (Xiaomi, Oppo, Vivo, Samsung…) still delay or block this. If ' +
+                      'alerts arrive late, set Flux\'s battery usage to "Unrestricted" in App info.',
+                    buttons: [
+                      { text: 'OK', style: 'cancel' },
+                      { text: 'Open App info', style: 'default', onPress: () => void Linking.openSettings() },
+                    ],
+                  }
+                : {
+                    title: 'Background checks are off',
+                    message:
+                      'Android is restricting Flux\'s background work, so balances only update when ' +
+                      'you open the app.\n\nOpen App info → Battery, choose "Unrestricted", then reopen Flux.',
+                    buttons: [
+                      { text: 'Cancel', style: 'cancel' },
+                      { text: 'Open App info', style: 'default', onPress: () => void Linking.openSettings() },
+                    ],
+                  }
+            );
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Background Checks</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              {backgroundOn === null
+                ? 'Checking…'
+                : backgroundOn
+                  ? `On — about every ${BACKGROUND_INTERVAL_MINUTES / 60} hours`
+                  : 'Restricted by Android — tap to fix'}
+            </Text>
+          </View>
+          <View
+            style={[styles.statusDot, { backgroundColor: backgroundOn ? theme.success : theme.warning }]}
+          />
+        </Pressable>
         <Text style={[styles.sectionFootnote, { color: theme.textSecondary }]}>
-          Flux does not run in the background. It checks for new transactions when you open the
-          app, when you pull down to refresh, and about once a day.
+          Flux applies new transactions as they arrive while it is open, catches up whenever you
+          open it or pull down to refresh, and checks in the background every few hours. You get a
+          notification for every balance it updates.
         </Text>
       </View>
 
@@ -291,34 +381,28 @@ export default function SettingsScreen() {
         <Pressable
           onPress={async () => {
             if (!smsAvailable) {
-              showAppModal({ title: 'Not available', message: 'SMS listening is only available on Android.' });
+              showAppModal({ title: 'Not available', message: 'SMS reading is only available on Android.' });
               return;
             }
             if (smsGranted) {
               showAppModal({ title: 'Already granted', message: 'SMS permission is already enabled.' });
               return;
             }
-            await requestSmsPermission();
-            // Re-check after a short delay (permission dialog is async)
-            setTimeout(async () => {
-              const granted = await checkSmsPermission();
-              setSmsGranted(granted);
-              if (granted) {
-                void runCatchUpScan('manual');
-                showAppModal({
-                  title: 'SMS Access Granted',
-                  message:
-                    'Flux will read your SMS inbox for transaction alerts when you open or refresh the app.',
-                });
-              }
-            }, 1000);
+            const granted = await requestSmsAccess();
+            setSmsGranted(granted);
+            if (granted) {
+              showAppModal({
+                title: 'SMS Access Granted',
+                message: "Flux will now read messages from your wallets' sender IDs and keep balances current.",
+              });
+            }
           }}
           style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
           <View style={{ flex: 1 }}>
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>SMS Access</Text>
             <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
-              {smsGranted ? 'Granted — inbox is read on refresh' : 'Tap to request permission'}
+              {smsGranted ? 'Granted — wallet SMS are read automatically' : 'Off — tap to allow'}
             </Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: smsGranted ? theme.success : theme.warning }]} />
@@ -333,28 +417,7 @@ export default function SettingsScreen() {
               showAppModal({ title: 'Already granted', message: 'Notification access is already enabled.' });
               return;
             }
-            showAppModal({
-              title: 'Enable Notification Access',
-              message:
-                'Android requires you to manually enable notification access.\n\nTap "Open Settings", then find "Flux" in the list and toggle it ON.',
-              buttons: [
-                { text: 'Cancel', style: 'cancel' },
-                {
-                  text: 'Open Settings',
-                  style: 'default',
-                  onPress: () => {
-                    openNotificationSettings();
-                    // Re-check when user comes back (they'll tap back)
-                    setTimeout(() => {
-                      checkNotificationPermission().then((granted) => {
-                        setNotifGranted(granted);
-                        if (granted) void runCatchUpScan('manual');
-                      });
-                    }, 3000);
-                  },
-                },
-              ],
-            });
+            requestNotificationAccess();
           }}
           style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
         >
@@ -362,8 +425,8 @@ export default function SettingsScreen() {
             <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Notification Access</Text>
             <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
               {notifGranted
-                ? 'Granted — alerts are captured for the next check'
-                : 'Tap to open settings (manual toggle required)'}
+                ? 'Granted — wallet-app alerts are captured'
+                : 'Off — tap to open settings (manual toggle required)'}
             </Text>
           </View>
           <View style={[styles.statusDot, { backgroundColor: notifGranted ? theme.success : theme.warning }]} />
@@ -385,6 +448,26 @@ export default function SettingsScreen() {
             thumbColor={themeMode === 'dark' ? theme.accentPrimary : '#f4f3f4'}
           />
         </View>
+      </View>
+
+      {/* About */}
+      <View style={styles.section}>
+        <Text style={[styles.sectionTitle, { color: theme.textSecondary }]}>ABOUT</Text>
+        <Pressable
+          onPress={() => {
+            void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+            checkForUpdatesNow();
+          }}
+          style={[styles.row, { backgroundColor: theme.surface, borderColor: theme.border }]}
+        >
+          <View style={{ flex: 1 }}>
+            <Text style={[styles.rowLabel, { color: theme.textPrimary }]}>Check for Updates</Text>
+            <Text style={[styles.rowHint, { color: theme.textSecondary }]}>
+              Flux {version.name} (build {version.code})
+            </Text>
+          </View>
+          <Text style={[styles.rowArrow, { color: theme.textSecondary }]}>↻</Text>
+        </Pressable>
       </View>
 
       {/* Danger zone */}

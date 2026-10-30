@@ -2,7 +2,7 @@ import { Platform } from 'react-native';
 import * as Notifications from 'expo-notifications';
 
 const CHANNEL_ID = 'flux-transactions';
-let initialized = false;
+let channelReady = false;
 
 export interface TransactionNotice {
   walletName: string;
@@ -11,15 +11,20 @@ export interface TransactionNotice {
   balanceAfter: number;
   /** Display name of the AI provider, when detection came from AI. */
   aiProvider?: string;
+  /** When the transaction happened (epoch ms); defaults to now. */
+  at?: number;
 }
 
-/**
- * Prepare the notification channel and permission. Safe to call repeatedly.
- */
-export async function initNotifications(): Promise<void> {
-  if (initialized) return;
-  initialized = true;
+// Beyond this many transactions in one scan (e.g. the first catch-up after a
+// few days away), one summary replaces a stack of individual alerts.
+const MAX_INDIVIDUAL_ALERTS = 3;
 
+/**
+ * Prepare the notification handler and channel. Never prompts, so it is safe
+ * from the headless background task, where there is no screen to prompt on.
+ */
+async function ensureChannel(): Promise<void> {
+  if (channelReady) return;
   try {
     Notifications.setNotificationHandler({
       handleNotification: async () => ({
@@ -39,11 +44,23 @@ export async function initNotifications(): Promise<void> {
         lockscreenVisibility: Notifications.AndroidNotificationVisibility.PRIVATE,
       });
     }
-
-    const { status } = await Notifications.getPermissionsAsync();
-    if (status !== 'granted') await Notifications.requestPermissionsAsync();
+    channelReady = true;
   } catch (err) {
-    console.error('[Notify] init failed:', err);
+    console.error('[Notify] channel setup failed:', err);
+  }
+}
+
+/**
+ * Prepare notifications and ask for permission if Android still allows
+ * asking. Call from the UI only.
+ */
+export async function initNotifications(): Promise<void> {
+  await ensureChannel();
+  try {
+    const { status, canAskAgain } = await Notifications.getPermissionsAsync();
+    if (status !== 'granted' && canAskAgain) await Notifications.requestPermissionsAsync();
+  } catch (err) {
+    console.error('[Notify] permission request failed:', err);
   }
 }
 
@@ -54,39 +71,70 @@ function formatPkr(value: number): string {
   });
 }
 
+function formatTime(at: number | undefined): string {
+  const date = new Date(at ?? Date.now());
+  const time = date.toLocaleTimeString('en-PK', { hour: 'numeric', minute: '2-digit', hour12: true });
+  // A catch-up scan can surface something from an earlier day — say which.
+  if (date.toDateString() === new Date().toDateString()) return time;
+  return `${date.toLocaleDateString('en-PK', { day: 'numeric', month: 'short' })}, ${time}`;
+}
+
+async function canPost(): Promise<boolean> {
+  await ensureChannel();
+  const { status } = await Notifications.getPermissionsAsync();
+  return status === 'granted';
+}
+
+async function post(title: string, body: string): Promise<void> {
+  await Notifications.scheduleNotificationAsync({
+    content: {
+      title,
+      body,
+      ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
+    },
+    trigger: null,
+  });
+}
+
 /**
  * Post a local notification for a detected transaction. Failures are ignored —
  * a missing notification must never break balance tracking.
  */
 export async function notifyTransaction(notice: TransactionNotice): Promise<void> {
   try {
-    await initNotifications();
-
-    const { status } = await Notifications.getPermissionsAsync();
-    if (status !== 'granted') return;
+    if (!(await canPost())) return;
 
     const isCredit = notice.direction === 'credit';
-    const time = new Date().toLocaleTimeString('en-PK', {
-      hour: 'numeric',
-      minute: '2-digit',
-      hour12: true,
-    });
-
     const title = `${isCredit ? '↓ Received' : '↑ Sent'} Rs. ${formatPkr(notice.amount)}`;
     const lines = [
-      `${notice.walletName} · ${time}`,
+      `${notice.walletName} · ${formatTime(notice.at)}`,
       `Balance: Rs. ${formatPkr(notice.balanceAfter)}`,
     ];
     if (notice.aiProvider) lines.push(`Detected by ${notice.aiProvider} AI`);
 
-    await Notifications.scheduleNotificationAsync({
-      content: {
-        title,
-        body: lines.join('\n'),
-        ...(Platform.OS === 'android' ? { channelId: CHANNEL_ID } : {}),
-      },
-      trigger: null,
-    });
+    await post(title, lines.join('\n'));
+  } catch (err) {
+    console.error('[Notify] failed:', err);
+  }
+}
+
+/**
+ * Alert for everything one scan applied: individually when there are a few,
+ * as a single summary when a catch-up turned up many.
+ */
+export async function notifyTransactions(notices: TransactionNotice[]): Promise<void> {
+  if (notices.length === 0) return;
+  if (notices.length <= MAX_INDIVIDUAL_ALERTS) {
+    for (const notice of notices) await notifyTransaction(notice);
+    return;
+  }
+  try {
+    if (!(await canPost())) return;
+    const lines = notices.map(
+      (n) =>
+        `${n.walletName}: ${n.direction === 'credit' ? '+' : '−'}Rs. ${formatPkr(n.amount)} → Rs. ${formatPkr(n.balanceAfter)}`
+    );
+    await post(`Flux updated ${notices.length} transactions`, lines.join('\n'));
   } catch (err) {
     console.error('[Notify] failed:', err);
   }

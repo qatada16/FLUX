@@ -2,7 +2,10 @@ package expo.modules.smslistener
 
 import android.Manifest
 import android.content.pm.PackageManager
-import android.os.Build
+import android.database.ContentObserver
+import android.net.Uri
+import android.os.Handler
+import android.os.Looper
 import android.provider.Telephony
 import androidx.core.content.ContextCompat
 import expo.modules.kotlin.modules.Module
@@ -14,50 +17,39 @@ import expo.modules.kotlin.modules.ModuleDefinition
  * There is deliberately no broadcast receiver here. Transaction SMS land in
  * the system inbox whether or not this app is running, so balances are
  * recovered by scanning that inbox when the user opens or refreshes the app
- * (and once a day via WorkManager). That keeps the app entirely asleep in
- * between and avoids RECEIVE_SMS altogether.
+ * (and periodically via WorkManager). That avoids RECEIVE_SMS altogether.
+ *
+ * While the app process happens to be alive, an inbox ContentObserver tells JS
+ * that something changed so it can scan straight away. The observer costs
+ * nothing when idle and dies with the process — it is a shortcut, not a
+ * background service.
+ *
+ * Permission requests go through React Native's PermissionsAndroid, which
+ * reports the user's answer; this module only checks.
  */
 class SmsListenerModule : Module() {
+  private var observer: ContentObserver? = null
 
   override fun definition() = ModuleDefinition {
     Name("SmsListener")
 
+    Events("onInboxChanged")
+
     AsyncFunction("checkPermission") {
       val context = appContext.reactContext ?: return@AsyncFunction false
-      ContextCompat.checkSelfPermission(
-        context, Manifest.permission.READ_SMS
-      ) == PackageManager.PERMISSION_GRANTED
-    }
-
-    AsyncFunction("requestPermission") {
-      val activity = appContext.currentActivity ?: return@AsyncFunction false
-
-      val granted = ContextCompat.checkSelfPermission(
-        activity, Manifest.permission.READ_SMS
-      ) == PackageManager.PERMISSION_GRANTED
-      if (granted) return@AsyncFunction true
-
-      if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
-        activity.requestPermissions(
-          arrayOf(Manifest.permission.READ_SMS), SMS_PERMISSION_REQUEST_CODE
-        )
-      }
-      // The grant result arrives asynchronously; the caller re-checks.
-      false
+      hasReadSms(context)
     }
 
     /**
-     * Inbox messages with date >= `since` (epoch ms), oldest first, at most
-     * `limit` rows. Oldest-first plus a caller-advanced cursor lets a wide
-     * window be walked in pages instead of returning thousands of rows.
+     * Inbox messages after the (date, _id) position given, oldest first, at
+     * most `limit` rows. Pass the last row of one page to get the next; pass
+     * afterId = -1 to start at `since` inclusive. Paging on the pair rather
+     * than the date alone means rows sharing a timestamp are never skipped.
      */
-    AsyncFunction("readMessages") { since: Double, limit: Int ->
+    AsyncFunction("readMessages") { since: Double, afterId: Double, limit: Int ->
       val context = appContext.reactContext
         ?: return@AsyncFunction emptyList<Map<String, Any>>()
-      val hasRead = ContextCompat.checkSelfPermission(
-        context, Manifest.permission.READ_SMS
-      ) == PackageManager.PERMISSION_GRANTED
-      if (!hasRead) return@AsyncFunction emptyList<Map<String, Any>>()
+      if (!hasReadSms(context)) return@AsyncFunction emptyList<Map<String, Any>>()
 
       val cappedLimit = limit.coerceIn(1, MAX_ROWS_PER_READ)
       val results = mutableListOf<Map<String, Any>>()
@@ -67,10 +59,13 @@ class SmsListenerModule : Module() {
         Telephony.Sms.BODY,
         Telephony.Sms.DATE
       )
-      val selection = "${Telephony.Sms.DATE} >= ?"
-      val selectionArgs = arrayOf(since.toLong().toString())
+      val date = Telephony.Sms.DATE
+      val id = Telephony.Sms._ID
+      val selection = "($date > ?) OR ($date = ? AND $id > ?)"
+      val sinceArg = since.toLong().toString()
+      val selectionArgs = arrayOf(sinceArg, sinceArg, afterId.toLong().toString())
       // SQLite-backed provider honours a trailing LIMIT in the sort order arg.
-      val sortOrder = "${Telephony.Sms.DATE} ASC LIMIT $cappedLimit"
+      val sortOrder = "$date ASC, $id ASC LIMIT $cappedLimit"
 
       context.contentResolver.query(
         Telephony.Sms.Inbox.CONTENT_URI, projection, selection, selectionArgs, sortOrder
@@ -90,10 +85,59 @@ class SmsListenerModule : Module() {
       }
       results
     }
+
+    /**
+     * Start emitting onInboxChanged whenever the SMS store changes. Idempotent;
+     * returns false when READ_SMS is missing (call again once it is granted).
+     */
+    Function("startWatching") {
+      val context = appContext.reactContext ?: return@Function false
+      if (observer != null) return@Function true
+      if (!hasReadSms(context)) return@Function false
+
+      val obs = object : ContentObserver(Handler(Looper.getMainLooper())) {
+        override fun onChange(selfChange: Boolean) {
+          onChange(selfChange, null)
+        }
+
+        override fun onChange(selfChange: Boolean, uri: Uri?) {
+          sendEvent("onInboxChanged", mapOf<String, Any?>())
+        }
+      }
+      try {
+        context.contentResolver.registerContentObserver(
+          Telephony.Sms.CONTENT_URI, true, obs
+        )
+        observer = obs
+        true
+      } catch (e: Exception) {
+        false
+      }
+    }
+
+    Function("stopWatching") {
+      unregisterObserver()
+    }
+
+    OnDestroy {
+      unregisterObserver()
+    }
+  }
+
+  private fun hasReadSms(context: android.content.Context): Boolean =
+    ContextCompat.checkSelfPermission(
+      context, Manifest.permission.READ_SMS
+    ) == PackageManager.PERMISSION_GRANTED
+
+  private fun unregisterObserver() {
+    val obs = observer ?: return
+    observer = null
+    try {
+      appContext.reactContext?.contentResolver?.unregisterContentObserver(obs)
+    } catch (_: Exception) {}
   }
 
   companion object {
-    private const val SMS_PERMISSION_REQUEST_CODE = 1001
     // Hard ceiling on one page, so a 90-day window can't blow up the bridge.
     private const val MAX_ROWS_PER_READ = 500
   }

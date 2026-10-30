@@ -17,6 +17,7 @@ import { useWalletStore } from '../../src/store/walletStore';
 import { useAuthStore } from '../../src/store/authStore';
 import { pushAllWalletsToCloud } from '../../src/lib/sync';
 import { uuidv4 } from '../../src/lib/uuid';
+import { checkTrackingAccess, requestNotificationAccess, requestSmsAccess } from '../../src/lib/permissions';
 import type { Wallet, TrackingMethod } from '../../src/types/wallet';
 
 interface WalletConfig {
@@ -95,11 +96,27 @@ export default function ConfigureWalletsScreen() {
 
   const isLastWallet = currentIndex === providers.length - 1;
 
+  // A sender typed but not confirmed with "+ Add" still counts — moving on
+  // without it would leave that shortcode unread.
+  const withPendingSender = (): Record<string, WalletConfig> => {
+    const pending = newSmsSender.trim();
+    if (!pending || config.trackingMethod !== 'sms') return configs;
+    const current = config.smsSender ? config.smsSender.split(',').map((s) => s.trim()).filter(Boolean) : [];
+    if (current.includes(pending)) return configs;
+    const next = {
+      ...configs,
+      [currentProvider.key]: { ...config, smsSender: [...current, pending].join(', ') },
+    };
+    setConfigs(next);
+    return next;
+  };
+
   const handleNext = () => {
+    const finalConfigs = withPendingSender();
     if (isLastWallet) {
       // Save all wallets to the store
       providers.forEach((provider, index) => {
-        const cfg = configs[provider.key];
+        const cfg = finalConfigs[provider.key];
         const wallet: Wallet = {
           id: uuidv4(),
           providerKey: provider.key,
@@ -125,6 +142,16 @@ export default function ConfigureWalletsScreen() {
       }
 
       router.replace('/dashboard');
+
+      // Ask for the access these wallets depend on now, while the user is
+      // thinking about tracking — not later, when balances quietly don't move.
+      const methods = providers.map((p) => finalConfigs[p.key].trackingMethod);
+      void (async () => {
+        if (methods.includes('sms')) await requestSmsAccess();
+        if (methods.includes('notification') && (await checkTrackingAccess()).notificationsMissing) {
+          requestNotificationAccess();
+        }
+      })();
     } else {
       setCurrentIndex((i) => i + 1);
       setNewSmsSender('');

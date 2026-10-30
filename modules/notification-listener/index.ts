@@ -1,4 +1,5 @@
 import { requireOptionalNativeModule } from 'expo-modules-core';
+import type { EventSubscription } from 'expo-modules-core';
 
 // A notification captured by the listener service and parked natively until
 // the next catch-up scan drains it.
@@ -10,6 +11,10 @@ export interface PendingNotification {
   timestamp: number;
 }
 
+type NotificationEventsMap = {
+  onNotificationCaptured: () => void;
+};
+
 interface NotificationListenerNativeModule {
   checkPermission(): Promise<boolean>;
   openSettings(): void;
@@ -17,6 +22,10 @@ interface NotificationListenerNativeModule {
   getPending(): Promise<PendingNotification[]>;
   ack(ids: string[]): Promise<boolean>;
   clearPending(): Promise<boolean>;
+  addListener<K extends keyof NotificationEventsMap>(
+    eventName: K,
+    listener: NotificationEventsMap[K]
+  ): EventSubscription;
 }
 
 // The native module — only available on Android
@@ -73,6 +82,16 @@ export async function ackNotifications(ids: string[]): Promise<void> {
 export async function clearPendingNotifications(): Promise<void> {
   if (!NotificationListenerModule) return;
   await NotificationListenerModule.clearPending();
+}
+
+/**
+ * Call `callback` when the listener service queues a tracked notification
+ * while the app is running. Returns an unsubscribe function.
+ */
+export function onNotificationCaptured(callback: () => void): (() => void) | null {
+  if (!NotificationListenerModule) return null;
+  const subscription = NotificationListenerModule.addListener('onNotificationCaptured', callback);
+  return () => subscription.remove();
 }
 
 /**

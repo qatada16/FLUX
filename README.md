@@ -7,7 +7,8 @@ Flux lets you see all your balances — JazzCash, Easypaisa, SadaPay, NayaPay, M
 ## Features
 
 - **Unified Dashboard** — Total balance across all accounts, donut chart (% distribution), bar chart (comparison), and individual wallet cards
-- **Auto Balance Updates** — Reads incoming SMS or app notifications to detect transactions and update balances in real-time
+- **Auto Balance Updates** — Reads wallet SMS and app notifications to detect transactions, updates balances and notifies you (never counting a message twice)
+- **In-app Updates** — `npm run build:prod` publishes a release; every installed copy offers it on next launch
 - **10 Pakistani Providers** — JazzCash, Easypaisa, SadaPay, NayaPay, Meezan Bank, Faysal Bank, HBL, UBL, Bank Alfalah, MCB (easily extensible)
 - **Cloud Backup** — Supabase auth + sync so you never lose data when switching phones
 - **Offline-First** — Works fully without internet; syncs when connected
@@ -25,7 +26,7 @@ Flux lets you see all your balances — JazzCash, Easypaisa, SadaPay, NayaPay, M
 - **Supabase** — Postgres database + email/password auth
 - **react-native-gifted-charts** — donut and bar charts
 - **react-native-reanimated** — smooth animations
-- **Custom Expo Modules (Kotlin)** — SMS BroadcastReceiver + Android NotificationListenerService
+- **Custom Expo Modules (Kotlin)** — SMS inbox reader + Android NotificationListenerService
 
 ## Quick Start
 
@@ -59,7 +60,7 @@ flux-app/
 │   ├── onboarding/               # Welcome → select → configure
 │   └── wallet/[id].tsx           # Wallet detail & edit
 ├── modules/                      # Native Kotlin modules
-│   ├── sms-listener/             # SMS BroadcastReceiver
+│   ├── sms-listener/             # SMS inbox reader + change observer
 │   └── notification-listener/    # NotificationListenerService
 ├── src/
 │   ├── components/               # Reusable UI components
@@ -67,6 +68,7 @@ flux-app/
 │   ├── store/                    # Zustand stores
 │   ├── theme/                    # Color tokens & theme system
 │   └── types/                    # TypeScript interfaces
+├── scripts/release.mjs           # Build + publish an update (npm run build:prod)
 ├── RUNME.md                      # Full setup & deployment guide
 └── eas.json                      # EAS Build profiles
 ```

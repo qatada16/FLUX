@@ -6,16 +6,22 @@ import { useAuthStore } from '../src/store/authStore';
 import { useTheme } from '../src/theme';
 import { pullWalletsFromCloud } from '../src/lib/sync';
 import { pullAiKeys } from '../src/lib/aiKeysSync';
+import { ensureStoresHydrated } from '../src/lib/hydrate';
 
 export default function IndexScreen() {
   const { theme } = useTheme();
-  const hasCompletedOnboarding = useWalletStore((s) => s.hasCompletedOnboarding);
   const initialize = useAuthStore((s) => s.initialize);
 
   useEffect(() => {
+    let cancelled = false;
     const boot = async () => {
+      // Routing depends on persisted state (has this device onboarded?), so
+      // wait for it to load — a fixed delay sent returning users to sign-in
+      // whenever storage was slow.
+      await ensureStoresHydrated();
       // Initialize auth (checks for existing session)
       await initialize();
+      if (cancelled) return;
       const user = useAuthStore.getState().user;
 
       if (user) {
@@ -34,7 +40,7 @@ export default function IndexScreen() {
         } else {
           router.replace('/onboarding/welcome');
         }
-      } else if (hasCompletedOnboarding) {
+      } else if (useWalletStore.getState().hasCompletedOnboarding) {
         // Not logged in but has local data — go to dashboard
         router.replace('/dashboard');
       } else {
@@ -43,9 +49,10 @@ export default function IndexScreen() {
       }
     };
 
-    // Small delay for Zustand hydration
-    const timer = setTimeout(boot, 150);
-    return () => clearTimeout(timer);
+    void boot();
+    return () => {
+      cancelled = true;
+    };
   }, []);
 
   return (
